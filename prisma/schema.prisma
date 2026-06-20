@@ -1,0 +1,75 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id            String         @id @default(uuid())
+  email         String         @unique
+  name          String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  subscriptions Subscription[]
+  scores        Score[]
+  winners       Winner[]
+}
+
+model Subscription {
+  id                   String   @id @default(uuid())
+  userId               String
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stripeSubscriptionId String   @unique
+  status               String   // e.g., active, trialing, canceled, past_due
+  priceId              String
+  currentPeriodEnd     DateTime
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+model Score {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  strokes     Int      // golf score strokes
+  courseName  String
+  datePlayed  DateTime
+  createdAt   DateTime @default(now())
+}
+
+model Charity {
+  id          String   @id @default(uuid())
+  name        String
+  description String
+  logoUrl     String?
+  totalRaised Decimal  @default(0.00) @db.Decimal(10, 2)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  draws       Draw[]
+}
+
+model Draw {
+  id               String   @id @default(uuid())
+  month            String   // e.g., "2026-06"
+  prizeDescription String
+  charityId        String
+  charity          Charity  @relation(fields: [charityId], references: [id], onDelete: Cascade)
+  status           String   // e.g., UPCOMING, COMPLETED
+  drawDate         DateTime
+  createdAt        DateTime @default(now())
+  winners          Winner[]
+}
+
+model Winner {
+  id          String   @id @default(uuid())
+  drawId      String
+  draw        Draw     @relation(fields: [drawId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  prizeWon    String
+  announcedAt DateTime @default(now())
+}
