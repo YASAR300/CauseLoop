@@ -34,7 +34,9 @@ import {
   Heart,
   PlusCircle,
   SearchCode,
-  FileText
+  FileText,
+  CreditCard,
+  ExternalLink
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
@@ -65,7 +67,12 @@ export default function DashboardPage() {
   const [copied, setCopied] = useState(false);
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
+  const [subscription, setSubscription] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  const [verifyingSubscription, setVerifyingSubscription] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [showPendingModal, setShowPendingModal] = useState(false);
 
   // API credentials toggles
   const [showAnonKey, setShowAnonKey] = useState(false);
@@ -112,7 +119,78 @@ export default function DashboardPage() {
           .single()
           .then(({ data: prof }) => {
             setProfile(prof || { role: "subscriber", charity_contribution_percentage: 10.00 });
-            setLoading(false);
+            
+            // Check query params for checkout=success
+            const searchParams = new URLSearchParams(window.location.search);
+            const isCheckoutSuccess = searchParams.get("checkout") === "success";
+
+            // Fetch subscription
+            supabase
+              .from("subscriptions")
+              .select("*")
+              .eq("user_id", currentUser.id)
+              .maybeSingle()
+              .then(({ data: sub }) => {
+                setSubscription(sub);
+
+                if (isCheckoutSuccess) {
+                  // If we don't have an active subscription yet, start polling
+                  if (!sub || sub.status !== "active") {
+                    setVerifyingSubscription(true);
+                    setLoading(false); // Let dashboard load behind verification backdrop
+                    
+                    let attempts = 0;
+                    const maxAttempts = 12; // 18 seconds total
+                    const intervalId = setInterval(() => {
+                      attempts++;
+                      supabase
+                        .from("subscriptions")
+                        .select("*")
+                        .eq("user_id", currentUser.id)
+                        .maybeSingle()
+                        .then(({ data: freshSub }) => {
+                          if (freshSub && freshSub.status === "active") {
+                            clearInterval(intervalId);
+                            setSubscription(freshSub);
+                            setVerifyingSubscription(false);
+                            setShowSuccessModal(true);
+                            // Clean up URL query params
+                            const cleanUrl = window.location.pathname;
+                            window.history.replaceState({}, document.title, cleanUrl);
+                          } else if (attempts >= maxAttempts) {
+                            clearInterval(intervalId);
+                            setVerifyingSubscription(false);
+                            setShowPendingModal(true);
+                            // Clean up URL query params
+                            const cleanUrl = window.location.pathname;
+                            window.history.replaceState({}, document.title, cleanUrl);
+                          }
+                        });
+                    }, 1500);
+                  } else {
+                    // Already active, just show success modal
+                    setShowSuccessModal(true);
+                    setLoading(false);
+                    // Clean up URL query params
+                    const cleanUrl = window.location.pathname;
+                    window.history.replaceState({}, document.title, cleanUrl);
+                  }
+                } else {
+                  // Standard flow
+                  // Auto-sweep expired subscriptions in client browser
+                  if (sub && sub.status === "active" && new Date(sub.current_period_end) < new Date()) {
+                    supabase
+                      .from("subscriptions")
+                      .update({ status: "lapsed" })
+                      .eq("id", sub.id)
+                      .then(() => {
+                        router.push("/subscribe");
+                      });
+                  } else {
+                    setLoading(false);
+                  }
+                }
+              });
           });
       } else {
         router.push("/login");
@@ -203,7 +281,15 @@ export default function DashboardPage() {
           {/* Org Selector */}
           <div className="flex items-center gap-1.5 px-2 py-1 hover:bg-[#1a1a1e] rounded cursor-pointer transition-colors text-[12px] font-medium text-zinc-300">
             <span>{orgName}</span>
-            <span className="text-[9px] font-extrabold bg-[#222] border border-[#333] text-zinc-400 px-1.5 py-0.5 rounded uppercase tracking-wider scale-90">Free</span>
+            <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider scale-90 ${
+              profile?.role === "admin"
+                ? "bg-indigo-500/10 border border-indigo-500/30 text-indigo-400"
+                : (subscription?.status === "active"
+                  ? "bg-[#3ecf8e]/10 border border-[#3ecf8e]/30 text-[#3ecf8e]"
+                  : "bg-[#222] border border-[#333] text-zinc-400")
+            }`}>
+              {profile?.role === "admin" ? "Admin" : (subscription?.status === "active" ? "Pro" : "Free")}
+            </span>
             <ChevronDown size={11} className="text-zinc-500" />
           </div>
 
@@ -254,7 +340,9 @@ export default function DashboardPage() {
             <div className="w-6 h-6 rounded-full bg-gradient-to-br from-[#5227FF] to-purple-600 border border-zinc-700 flex items-center justify-center font-bold text-white text-[10px] select-none shadow-sm">
               {userEmail[0].toUpperCase()}
             </div>
-            <div className="absolute -bottom-0.5 -right-0.5 w-2 h-2 bg-[#3ecf8e] rounded-full border border-[#111111]" />
+            <div className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full border border-[#111111] ${
+              subscription?.status === "active" ? "bg-[#3ecf8e]" : "bg-zinc-500"
+            }`} />
             
             {/* Popover */}
             <div className="absolute right-0 mt-2 w-48 bg-[#141414] border border-[#2e2e2e] rounded-lg shadow-2xl py-1.5 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 z-50">
@@ -262,6 +350,23 @@ export default function DashboardPage() {
                 <p className="text-[10px] text-zinc-500 truncate">Signed in as</p>
                 <p className="text-[12px] font-semibold text-white truncate mt-0.5">{userEmail}</p>
               </div>
+              {subscription?.status === "active" ? (
+                <a
+                  href="/api/portal"
+                  className="w-full text-left px-4 py-2 text-[12px] text-zinc-300 hover:text-white hover:bg-zinc-900 transition-colors flex items-center gap-2 border-b border-zinc-900/50"
+                >
+                  <CreditCard size={12} className="text-[#3ecf8e]" />
+                  Manage Billing
+                </a>
+              ) : (
+                <Link
+                  href="/subscribe"
+                  className="w-full text-left px-4 py-2 text-[12px] text-indigo-400 hover:text-indigo-300 hover:bg-zinc-900 transition-colors flex items-center gap-2 border-b border-zinc-900/50 font-bold"
+                >
+                  <Sparkles size={12} className="text-indigo-400 animate-pulse" />
+                  Upgrade to Pro
+                </Link>
+              )}
               <button
                 onClick={handleLogout}
                 className="w-full text-left px-4 py-2 text-[12px] text-red-400 hover:text-red-300 hover:bg-red-500/5 transition-colors flex items-center gap-2"
@@ -1179,6 +1284,70 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
+                {/* Subscription Billing */}
+                <div className="space-y-4 pt-4 border-t border-[#222]">
+                  <h3 className="text-[14px] font-bold text-white pb-1 flex items-center gap-1.5">
+                    <CreditCard size={13} className="text-indigo-400" />
+                    Subscription Billing
+                  </h3>
+                  
+                  {subscription?.status === "active" ? (
+                    <div className="space-y-3">
+                      <div className="bg-[#1c2c25] border border-[#3ecf8e]/20 rounded-lg p-4 flex items-center justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-[#3ecf8e] animate-pulse" />
+                            <h4 className="text-[13.5px] font-bold text-white capitalize">Active Pro Plan ({subscription?.plan_type})</h4>
+                          </div>
+                          <p className="text-[11.5px] text-zinc-400 mt-1">
+                            Your billing cycle renews on <span className="font-semibold text-zinc-200">{subscription?.current_period_end ? new Date(subscription.current_period_end).toLocaleDateString("en-GB", { day: 'numeric', month: 'short', year: 'numeric' }) : "N/A"}</span>.
+                          </p>
+                        </div>
+                        <span className="text-[10px] bg-[#3ecf8e]/10 text-[#3ecf8e] border border-[#3ecf8e]/20 px-2 py-0.5 rounded font-extrabold uppercase tracking-wider">
+                          Active
+                        </span>
+                      </div>
+                      <p className="text-[12.5px] text-zinc-400">
+                        Manage your subscription plan, view invoices, or cancel/update billing via the Stripe Customer Portal.
+                      </p>
+                      <a
+                        href="/api/portal"
+                        className="inline-flex items-center justify-center gap-1.5 bg-[#222] hover:bg-[#2d2d33] border border-[#2e2e2e] text-zinc-200 text-[12px] font-bold px-4 h-9 rounded transition-all"
+                      >
+                        Manage Billing & Invoices
+                        <ExternalLink size={11} />
+                      </a>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="bg-indigo-950/20 border border-indigo-500/25 rounded-lg p-4 flex items-center justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+                            <h4 className="text-[13.5px] font-bold text-white">Free Visitor Tier</h4>
+                          </div>
+                          <p className="text-[11.5px] text-zinc-400 mt-1">
+                            Upgrade to Pro to unlock WHS handicap indexes, monthly drawing tickets, and active charity donations.
+                          </p>
+                        </div>
+                        <span className="text-[10px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded font-extrabold uppercase tracking-wider">
+                          Inactive
+                        </span>
+                      </div>
+                      <p className="text-[12.5px] text-zinc-400">
+                        Select a monthly or discounted yearly pricing plan to upgrade your CauseLoop workspace.
+                      </p>
+                      <Link
+                        href="/subscribe"
+                        className="inline-flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[12px] font-bold px-4 h-9 rounded transition-all shadow-[0_4px_15px_rgba(79,70,229,0.2)]"
+                      >
+                        Upgrade to Pro
+                        <Sparkles size={11} />
+                      </Link>
+                    </div>
+                  )}
+                </div>
+
                 {/* API Credentials */}
                 <div className="space-y-4 pt-4 border-t border-[#222]">
                   <h3 className="text-[14px] font-bold text-white pb-1 flex items-center gap-1.5">
@@ -1260,6 +1429,98 @@ export default function DashboardPage() {
 
         </main>
       </div>
+
+      {/* Subscription Verifying Overlay */}
+      {verifyingSubscription && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-[#141414] border border-indigo-500/30 rounded-2xl max-w-[440px] w-full p-8 text-center space-y-6 shadow-[0_0_50px_rgba(82,39,255,0.15)] animate-fadeInUp">
+            
+            {/* Spinning logo/glow */}
+            <div className="relative mx-auto w-16 h-16 bg-indigo-600/10 border border-indigo-500/25 rounded-2xl flex items-center justify-center text-indigo-400">
+              <div className="absolute inset-0 rounded-2xl border border-dashed border-indigo-400 animate-spin" style={{ animationDuration: '6s' }} />
+              <svg width={28} height={28} viewBox="0 0 48 48" fill="none">
+                <defs>
+                  <linearGradient id="confirm-logo-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#5227FF" />
+                    <stop offset="100%" stopColor="#8644FF" />
+                  </linearGradient>
+                </defs>
+                <path
+                  fill="url(#confirm-logo-grad)"
+                  fillRule="evenodd"
+                  d="M12 30.99V36L-.01 23.99l2.516-2.499zM17.01 36H12l12.011 12.01 2.506-2.505zm28.487-9.497L48 24 24 0l-2.503 2.503L30.98 12h-5.732l-6.62-6.614-2.506 2.503 4.122 4.122h-2.869v18.625H36V27.77l4.122 4.122 2.503-2.506L36 22.747v-5.732zM13.253 10.747l-2.503 2.506 2.686 2.686 2.503-2.506zm21.314 21.314-2.495 2.503 2.686 2.686 2.506-2.503zM7.878 16.121l-2.503 2.504L12 25.253v-5.012zM27.756 36h-5.009l6.628 6.625 2.503-2.503z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </div>
+
+            <div className="space-y-2">
+              <h3 className="text-[18px] font-bold text-white tracking-tight">Confirming Subscription</h3>
+              <p className="text-[13px] text-zinc-400 max-w-[320px] mx-auto leading-relaxed">
+                We are securing your membership with Stripe. This takes just a moment to verify...
+              </p>
+            </div>
+
+            {/* Spinner and Status Indicator */}
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-5 h-5 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
+              <span className="text-[11px] font-mono text-zinc-500 uppercase tracking-widest animate-pulse">Awaiting Stripe Webhook</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Subscription Success Modal */}
+      {showSuccessModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-[#141414] border border-[#3ecf8e]/35 rounded-2xl max-w-[440px] w-full p-8 text-center space-y-6 shadow-[0_0_50px_rgba(62,207,142,0.15)] animate-fadeInUp">
+            
+            <div className="mx-auto w-16 h-16 bg-[#3ecf8e]/10 border border-[#3ecf8e]/20 rounded-full flex items-center justify-center text-[#3ecf8e]">
+              <Check size={32} strokeWidth={3} className="animate-bounce" />
+            </div>
+
+            <div className="space-y-2">
+              <h3 className="text-[20px] font-bold text-white tracking-tight">Welcome to CauseLoop Pro!</h3>
+              <p className="text-[13px] text-zinc-400 max-w-[320px] mx-auto leading-relaxed">
+                Thank you for subscribing! Your account has been upgraded to Pro. You now have full access to CauseLoop Studio.
+              </p>
+            </div>
+
+            <button
+              onClick={() => setShowSuccessModal(false)}
+              className="w-full bg-white text-black hover:bg-zinc-200 font-bold py-2.5 rounded-xl text-[13.5px] transition-all shadow-[0_4px_20px_rgba(255,255,255,0.08)]"
+            >
+              Go to Dashboard
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Subscription Pending Modal */}
+      {showPendingModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-[#141414] border border-amber-500/30 rounded-2xl max-w-[440px] w-full p-8 text-center space-y-6 shadow-[0_0_50px_rgba(245,158,11,0.15)] animate-fadeInUp">
+            
+            <div className="mx-auto w-16 h-16 bg-amber-500/10 border border-amber-500/20 rounded-full flex items-center justify-center text-amber-500">
+              <HelpCircle size={32} strokeWidth={2} />
+            </div>
+
+            <div className="space-y-2">
+              <h3 className="text-[18px] font-bold text-white tracking-tight">Payment Confirmation Pending</h3>
+              <p className="text-[13px] text-zinc-400 max-w-[320px] mx-auto leading-relaxed">
+                Stripe is taking a bit longer than usual to confirm your payment. Your account will automatically activate as soon as it completes.
+              </p>
+            </div>
+
+            <button
+              onClick={() => setShowPendingModal(false)}
+              className="w-full bg-[#222] border border-[#2e2e2e] text-zinc-200 hover:bg-[#2d2d33] font-bold py-2.5 rounded-xl text-[13.5px] transition-all"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
     </div>
   );

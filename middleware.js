@@ -38,6 +38,16 @@ export async function middleware(request) {
   const { data: { user } } = await supabase.auth.getUser();
   const { pathname } = request.nextUrl;
 
+  // Protect /subscribe page for logged-out users
+  if (pathname.startsWith("/subscribe")) {
+    if (!user) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/login";
+      redirectUrl.searchParams.set("redirect", pathname + request.nextUrl.search);
+      return NextResponse.redirect(redirectUrl);
+    }
+  }
+
   // Protect all /dashboard routes (app route group)
   if (pathname.startsWith("/dashboard")) {
     if (!user) {
@@ -58,6 +68,22 @@ export async function middleware(request) {
     const userRole = profile?.role || "visitor";
 
     // TODO: add active-subscription check here
+    const { data: subscription } = await supabase
+      .from("subscriptions")
+      .select("status")
+      .eq("user_id", user.id)
+      .eq("status", "active")
+      .maybeSingle();
+
+    const isSubscribed = subscription?.status === "active";
+
+    // Gating non-admin users without active subscriptions
+    const isCheckoutSuccess = request.nextUrl.searchParams.get("checkout") === "success";
+    if (userRole !== "admin" && !isSubscribed && !isCheckoutSuccess) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/subscribe";
+      return NextResponse.redirect(redirectUrl);
+    }
 
     // Role-based route protection: deny non-admins from admin sections
     if (pathname.startsWith("/dashboard/admin") && userRole !== "admin") {
