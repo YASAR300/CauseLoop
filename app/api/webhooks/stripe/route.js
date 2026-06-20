@@ -77,7 +77,7 @@ export async function POST(request) {
       // Fetch active subscription details from Stripe
       const subscription = await stripe.subscriptions.retrieve(subscriptionId);
       const priceId = subscription.items.data[0].price.id;
-      const planType = priceId === process.env.STRIPE_PRICE_YEARLY ? "yearly" : "monthly";
+      const planType = priceId === (process.env.STRIPE_PRICE_YEARLY || "price_1TkSdPIUEU1f1CxDZapSzNNQ") ? "yearly" : "monthly";
 
       const currentPeriodEnd = new Date(subscription.current_period_end * 1000).toISOString();
 
@@ -120,7 +120,7 @@ export async function POST(request) {
       }
 
       const priceId = subscription.items.data[0].price.id;
-      const planType = priceId === process.env.STRIPE_PRICE_YEARLY ? "yearly" : "monthly";
+      const planType = priceId === (process.env.STRIPE_PRICE_YEARLY || "price_1TkSdPIUEU1f1CxDZapSzNNQ") ? "yearly" : "monthly";
       const currentPeriodEnd = new Date(subscription.current_period_end * 1000).toISOString();
 
       const { error: updateError } = await supabase

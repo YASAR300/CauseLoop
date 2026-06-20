@@ -18,9 +18,9 @@ export async function GET(request) {
 
     let priceId = null;
     if (plan === "monthly") {
-      priceId = process.env.STRIPE_PRICE_MONTHLY;
+      priceId = process.env.STRIPE_PRICE_MONTHLY || "price_1TkSdNIUEU1f1CxDmLfYrj5D";
     } else if (plan === "yearly") {
-      priceId = process.env.STRIPE_PRICE_YEARLY;
+      priceId = process.env.STRIPE_PRICE_YEARLY || "price_1TkSdPIUEU1f1CxDZapSzNNQ";
     }
 
     if (!priceId) {
@@ -64,11 +64,10 @@ export async function POST(request) {
 
     const { plan } = await request.json();
     let priceId = null;
-
     if (plan === "monthly") {
-      priceId = process.env.STRIPE_PRICE_MONTHLY;
+      priceId = process.env.STRIPE_PRICE_MONTHLY || "price_1TkSdNIUEU1f1CxDmLfYrj5D";
     } else if (plan === "yearly") {
-      priceId = process.env.STRIPE_PRICE_YEARLY;
+      priceId = process.env.STRIPE_PRICE_YEARLY || "price_1TkSdPIUEU1f1CxDZapSzNNQ";
     }
 
     if (!priceId) {
