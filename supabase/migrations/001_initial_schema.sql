@@ -187,13 +187,13 @@ BEGIN
   INSERT INTO public.profiles (id, role, full_name, charity_contribution_percentage)
   VALUES (
     NEW.id,
-    'subscriber'::user_role,
+    'subscriber'::public.user_role,
     COALESCE(NEW.raw_user_meta_data->>'full_name', ''),
     10.00
   );
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users

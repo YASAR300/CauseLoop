@@ -16,9 +16,9 @@ RETURNS BOOLEAN AS $$
     SELECT 1
     FROM public.profiles
     WHERE id   = auth.uid()
-      AND role = 'admin'
+      AND role = 'admin'::public.user_role
   );
-$$ LANGUAGE sql STABLE SECURITY DEFINER;
+$$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public;
 
 -- --------------------------------------------------------
 -- ENABLE ROW LEVEL SECURITY
