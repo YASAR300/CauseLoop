@@ -688,6 +688,62 @@ const CHARITIES = [
   { icon: GraduationCap, name: "UNICEF UK", cat: "Children Support", raised: "£14,700", color: "text-cyan-400 border-cyan-500/20 bg-cyan-500/5" },
 ];
 
+function FeaturedCharitySpotlight() {
+  const [featured, setFeatured] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/charities?featured=true")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.charities && data.charities.length > 0) {
+          setFeatured(data.charities[0]);
+        }
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error("Error loading featured charity:", err);
+        setLoading(false);
+      });
+  }, []);
+
+  if (loading || !featured) return null;
+
+  return (
+    <div className="mb-12 rounded-3xl border border-indigo-500/25 bg-gradient-to-br from-indigo-950/20 via-zinc-950/50 to-zinc-950/20 p-6 md:p-8 flex flex-col md:flex-row gap-6 items-center shadow-2xl relative overflow-hidden">
+      <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/5 rounded-full blur-[100px] pointer-events-none" />
+      
+      <div className="w-20 h-20 rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800 shrink-0 shadow-lg">
+        {featured.image_urls && featured.image_urls.length > 0 ? (
+          <img src={featured.image_urls[0]} alt={featured.name} className="w-full h-full object-cover" />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-rose-500"><Heart size={28} /></div>
+        )}
+      </div>
+
+      <div className="flex-grow space-y-3.5 text-center md:text-left">
+        <div>
+          <span className="text-[10px] text-rose-500 font-black uppercase tracking-widest bg-rose-500/10 border border-rose-500/25 px-2.5 py-0.5 rounded-full">
+            Spotlight partner
+          </span>
+          <h3 className="text-[18px] font-black text-white mt-2">{featured.name}</h3>
+        </div>
+        <p className="text-[13px] text-zinc-400 leading-relaxed font-medium max-w-2xl">
+          {featured.description}
+        </p>
+        <div className="flex flex-col sm:flex-row gap-3 justify-center md:justify-start pt-1">
+          <Link href={`/charities/${featured.id}`} className="h-8 px-4 bg-indigo-600 hover:bg-indigo-500 text-white text-[12px] font-bold rounded-xl flex items-center justify-center gap-1 transition-all shadow-md">
+            View Details <ArrowRight size={11} />
+          </Link>
+          <Link href="/charities" className="h-8 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 hover:text-white text-[12px] font-bold rounded-xl flex items-center justify-center transition-all">
+            Donate One-off
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CharitiesSection() {
   return (
     <section id="charities" className="bg-[#020205] py-24 border-t border-white/[0.04] relative">
@@ -721,12 +777,14 @@ function CharitiesSection() {
             </ScrollReveal>
           </div>
           <Link
-            href="#"
+            href="/charities"
             className="inline-flex items-center gap-1.5 text-[13.5px] font-semibold text-zinc-400 border border-white/[0.08] rounded-xl px-4 py-2 hover:text-white hover:border-white/20 transition-all shrink-0 bg-white/[0.02]"
           >
             Browse all charities <ArrowRight size={13} />
           </Link>
         </div>
+
+        <FeaturedCharitySpotlight />
 
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {CHARITIES.map((c, i) => {

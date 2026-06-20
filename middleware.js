@@ -38,16 +38,6 @@ export async function middleware(request) {
   const { data: { user } } = await supabase.auth.getUser();
   const { pathname } = request.nextUrl;
 
-  // Protect /subscribe page for logged-out users
-  if (pathname.startsWith("/subscribe")) {
-    if (!user) {
-      const redirectUrl = request.nextUrl.clone();
-      redirectUrl.pathname = "/login";
-      redirectUrl.searchParams.set("redirect", pathname + request.nextUrl.search);
-      return NextResponse.redirect(redirectUrl);
-    }
-  }
-
   // Protect all /dashboard routes (app route group)
   if (pathname.startsWith("/dashboard")) {
     if (!user) {

@@ -12,6 +12,11 @@
 
   * {
     box-sizing: border-box;
+    -ms-overflow-style: none; /* IE and Edge */
+    scrollbar-width: none;    /* Firefox */
+  }
+  *::-webkit-scrollbar {
+    display: none;            /* Chrome, Safari, Opera */
   }
 
   html {
@@ -62,4 +67,80 @@
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* ── Donation Slider Smooth Styling ── */
+input[type="range"].accent-rose-500 {
+  -webkit-appearance: none;
+  appearance: none;
+  outline: none;
+  border: none;
+  background: transparent;
+}
+
+/* WebKit track */
+input[type="range"].accent-rose-500::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    to right,
+    #f43f5e calc(var(--slider-pct, 0%) * 1%),
+    #3f3f46 calc(var(--slider-pct, 0%) * 1%)
+  );
+}
+
+/* WebKit thumb */
+input[type="range"].accent-rose-500::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #f43f5e;
+  border: 2px solid #1a1a1a;
+  box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.15);
+  margin-top: -6.5px;
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, transform 0.1s ease;
+}
+
+input[type="range"].accent-rose-500::-webkit-slider-thumb:hover {
+  box-shadow: 0 0 0 6px rgba(244, 63, 94, 0.2);
+  transform: scale(1.1);
+}
+
+input[type="range"].accent-rose-500:active::-webkit-slider-thumb {
+  box-shadow: 0 0 0 8px rgba(244, 63, 94, 0.25);
+  transform: scale(1.15);
+}
+
+/* Firefox track */
+input[type="range"].accent-rose-500::-moz-range-track {
+  height: 3px;
+  border-radius: 9999px;
+  background: #3f3f46;
+}
+
+/* Firefox progress fill */
+input[type="range"].accent-rose-500::-moz-range-progress {
+  height: 3px;
+  border-radius: 9999px;
+  background: #f43f5e;
+}
+
+/* Firefox thumb */
+input[type="range"].accent-rose-500::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #f43f5e;
+  border: 2px solid #1a1a1a;
+  box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.15);
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, transform 0.1s ease;
+}
+
+input[type="range"].accent-rose-500::-moz-range-thumb:hover {
+  box-shadow: 0 0 0 6px rgba(244, 63, 94, 0.2);
+  transform: scale(1.1);
 }

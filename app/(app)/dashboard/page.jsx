@@ -1,14 +1,13 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Home,
   Table,
-  Terminal,
-  Database,
-  FolderOpen,
+  Heart,
+  Trophy,
   Settings,
   Plus,
   Copy,
@@ -20,28 +19,30 @@ import {
   ArrowUpRight,
   Lock,
   Play,
-  Eye,
-  EyeOff,
   LogOut,
   Sparkles,
-  Server,
-  Cpu,
-  Bot,
-  Key,
-  ShieldCheck,
-  Calendar,
-  Layers,
-  Heart,
-  PlusCircle,
-  SearchCode,
-  FileText,
   CreditCard,
-  ExternalLink
+  ExternalLink,
+  ShieldCheck,
+  AlertCircle,
+  Filter,
+  Upload,
+  Calendar,
+  Users,
+  CheckCircle2,
+  XCircle,
+  Trash2,
+  Edit,
+  DollarSign,
+  Activity,
+  ChevronRight,
+  TrendingUp,
+  Award
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
-// Logo component matching landing page style
-function Logo({ size = 20 }) {
+// Brand Logo Component matching original dashboard logo styling
+function Logo({ size = 18 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 48 48" fill="none">
       <defs>
@@ -62,31 +63,35 @@ function Logo({ size = 20 }) {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
-  const [copied, setCopied] = useState(false);
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [subscription, setSubscription] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const [verifyingSubscription, setVerifyingSubscription] = useState(false);
-  const [showSuccessModal, setShowSuccessModal] = useState(false);
-  const [showPendingModal, setShowPendingModal] = useState(false);
-
-  // API credentials toggles
-  const [showAnonKey, setShowAnonKey] = useState(false);
-  const [showServiceKey, setShowServiceKey] = useState(false);
-
-  // Scores State (Table Editor)
+  // Business Data States
   const [scores, setScores] = useState([]);
+  const [charities, setCharities] = useState([]);
+  const [draws, setDraws] = useState([]);
+  const [winners, setWinners] = useState([]);
+  const [drawEntries, setDrawEntries] = useState([]);
+
+  // Toast / Status state
+  const [toastMessage, setToastMessage] = useState("");
+  const [toastType, setToastType] = useState("success");
+
+  // Overview / Slider updates
+  const [updatingSlider, setUpdatingSlider] = useState(false);
+  const [sliderValue, setSliderValue] = useState(10);
+
+  // Golf Score Entry Forms
   const [scoreValue, setScoreValue] = useState("");
-  const [scoreDate, setScoreDate] = useState("2026-06-20");
+  const [scoreDate, setScoreDate] = useState("");
   const [showAddScoreModal, setShowAddScoreModal] = useState(false);
   const [addErrorMessage, setAddErrorMessage] = useState("");
   const [addDuplicateScoreId, setAddDuplicateScoreId] = useState(null);
 
-  // Editing Score State
+  // Golf Score Edit Forms
   const [editingScore, setEditingScore] = useState(null);
   const [editScoreValue, setEditScoreValue] = useState("");
   const [editScoreDate, setEditScoreDate] = useState("");
@@ -94,168 +99,217 @@ export default function DashboardPage() {
   const [editDuplicateScoreId, setEditDuplicateScoreId] = useState(null);
   const [showEditScoreModal, setShowEditScoreModal] = useState(false);
 
-  // SQL Editor State
-  const [selectedQuery, setSelectedQuery] = useState("select_draws");
-  const [queryRunning, setQueryRunning] = useState(false);
-  const [queryResult, setQueryResult] = useState(null);
+  // Charities Directory Filter/Search
+  const [charitySearch, setCharitySearch] = useState("");
+  const [selectedCharityCategory, setSelectedCharityCategory] = useState("All");
 
-  // Database Explorer (Charities schema)
-  const [selectedSchemaTable, setSelectedSchemaTable] = useState("charities");
+  // General Settings Form
+  const [editName, setEditName] = useState("");
+  const [editCharityId, setEditCharityId] = useState("");
+  const [editContributionPercentage, setEditContributionPercentage] = useState(10);
+  const [savingSettings, setSavingSettings] = useState(false);
 
-  // Storage Bucket Browser (Pricing plans)
-  const [selectedBucketFile, setSelectedBucketFile] = useState(null);
+  // Stripe Checkout success overlays
+  const [verifyingSubscription, setVerifyingSubscription] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [showPendingModal, setShowPendingModal] = useState(false);
 
-  // Project Settings State
-  const [projectName, setProjectName] = useState("");
-  const [saveSuccess, setSaveSuccess] = useState(false);
+  // Command Palette & Search States
+  const [showSearchModal, setShowSearchModal] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchSelectedIndex, setSearchSelectedIndex] = useState(0);
 
-  const fetchScores = async () => {
+  // Admin Panel States
+  const [adminTab, setAdminTab] = useState("users");
+  const [adminProfiles, setAdminProfiles] = useState([]);
+  const [adminCharities, setAdminCharities] = useState([]);
+  const [adminDraws, setAdminDraws] = useState([]);
+  const [adminWinners, setAdminWinners] = useState([]);
+
+  // Admin User CRUD modal
+  const [selectedUserScores, setSelectedUserScores] = useState(null);
+  const [showUserScoresModal, setShowUserScoresModal] = useState(false);
+
+  // Admin Charity CRUD Form
+  const [showAddCharityModal, setShowAddCharityModal] = useState(false);
+  const [newCharityName, setNewCharityName] = useState("");
+  const [newCharityDesc, setNewCharityDesc] = useState("");
+  const [newCharityImg, setNewCharityImg] = useState("");
+  const [newCharityFeatured, setNewCharityFeatured] = useState(false);
+
+  // Admin Draw Simulation Form
+  const [drawMonth, setDrawMonth] = useState(new Date().getMonth() + 1);
+  const [drawYear, setDrawYear] = useState(new Date().getFullYear());
+  const [drawLogic, setDrawLogic] = useState("random");
+  const [drawSimulating, setDrawSimulating] = useState(false);
+  const [simulationResults, setSimulationResults] = useState(null);
+
+  // Toast Trigger
+  const triggerToast = (msg, type = "success") => {
+    setToastMessage(msg);
+    setToastType(type);
+    setTimeout(() => setToastMessage(""), 4000);
+  };
+
+  const fetchAdminData = useCallback(async () => {
     try {
-      const res = await fetch("/api/scores");
+      const res = await fetch("/api/admin/users");
       if (res.ok) {
         const data = await res.json();
-        setScores(data.scores || []);
+        setAdminProfiles(data.profiles || []);
+        setAdminCharities(data.charities || []);
+        setAdminDraws(data.draws || []);
+        setAdminWinners(data.winners || []);
       }
     } catch (err) {
-      console.error("Error fetching scores:", err);
+      console.error("Error loading admin datasets:", err);
     }
-  };
+  }, []);
+
+  // Primary Fetch logic
+  const fetchData = useCallback(async (currentUser) => {
+    const supabase = createClient();
+    const uid = currentUser?.id || user?.id;
+    if (!uid) return;
+
+    try {
+      // 1. Fetch Profile
+      const { data: prof, error: profErr } = await supabase
+        .from("profiles")
+        .select("*, charities(*)")
+        .eq("id", uid)
+        .maybeSingle();
+
+      if (prof) {
+        setProfile(prof);
+        setEditName(prof.full_name || "");
+        setEditCharityId(prof.charity_id || "");
+        setEditContributionPercentage(prof.charity_contribution_percentage || 10);
+      }
+
+      // 2. Fetch Subscription
+      const { data: sub } = await supabase
+        .from("subscriptions")
+        .select("*")
+        .eq("user_id", uid)
+        .maybeSingle();
+      setSubscription(sub);
+
+      // 3. Fetch user golf scores
+      const { data: scoreData } = await supabase
+        .from("scores")
+        .select("*")
+        .eq("user_id", uid)
+        .order("score_date", { ascending: false })
+        .order("created_at", { ascending: false });
+      setScores(scoreData || []);
+
+      // 4. Fetch charities
+      const { data: charityData } = await supabase
+        .from("charities")
+        .select("*")
+        .order("name", { ascending: true });
+      setCharities(charityData || []);
+
+      // 5. Fetch published drawings
+      const { data: drawData } = await supabase
+        .from("draws")
+        .select("*")
+        .order("year", { ascending: false })
+        .order("month", { ascending: false });
+      setDraws(drawData || []);
+
+      // 6. Fetch user winnings
+      const { data: winnerData } = await supabase
+        .from("winners")
+        .select("*, draws(*)")
+        .eq("user_id", uid)
+        .order("created_at", { ascending: false });
+      setWinners(winnerData || []);
+
+      // 7. Fetch user draw entries
+      const { data: entryData } = await supabase
+        .from("draw_entries")
+        .select("*, draws(*)")
+        .eq("user_id", uid);
+      setDrawEntries(entryData || []);
+
+      // 8. If Admin, fetch admin panels
+      if (prof?.role === "admin") {
+        fetchAdminData();
+      }
+    } catch (err) {
+      console.error("Error loading dashboard data:", err);
+    }
+  }, [user, fetchAdminData]);
 
   useEffect(() => {
     const supabase = createClient();
+    setScoreDate(new Date().toISOString().split("T")[0]);
+
     supabase.auth.getUser().then(({ data: { user: currentUser } }) => {
       if (currentUser) {
         setUser(currentUser);
-        setProjectName(`${currentUser.email?.split("@")[0]}'s Project`);
-        
-        // Fetch profile
-        supabase
-          .from("profiles")
-          .select("*")
-          .eq("id", currentUser.id)
-          .single()
-          .then(({ data: prof }) => {
-            setProfile(prof || { role: "subscriber", charity_contribution_percentage: 10.00 });
-            fetchScores();
-            
-            // Check query params for checkout=success
-            const searchParams = new URLSearchParams(window.location.search);
-            const isCheckoutSuccess = searchParams.get("checkout") === "success";
+        fetchData(currentUser);
 
-            // Fetch subscription
+        // Check Stripe success redirects
+        const searchParams = new URLSearchParams(window.location.search);
+        const isCheckoutSuccess = searchParams.get("checkout") === "success";
+
+        if (isCheckoutSuccess) {
+          setVerifyingSubscription(true);
+          const sessionId = searchParams.get("session_id");
+
+          const cleanAndComplete = (activeSub) => {
+            setSubscription(activeSub);
+            setVerifyingSubscription(false);
+            setShowSuccessModal(true);
+            const cleanUrl = window.location.pathname;
+            window.history.replaceState({}, document.title, cleanUrl);
+            fetchData(currentUser);
+          };
+
+          let attempts = 0;
+          const intervalId = setInterval(() => {
+            attempts++;
             supabase
               .from("subscriptions")
               .select("*")
               .eq("user_id", currentUser.id)
               .maybeSingle()
-              .then(({ data: sub }) => {
-                setSubscription(sub);
-
-                if (isCheckoutSuccess) {
-                  // If we don't have an active subscription yet, start immediate confirmation and polling
-                  if (!sub || sub.status !== "active") {
-                    setVerifyingSubscription(true);
-                    setLoading(false); // Let dashboard load behind verification backdrop
-
-                    const sessionId = searchParams.get("session_id");
-
-                    const cleanAndComplete = (activeSub) => {
-                      setSubscription(activeSub);
-                      setVerifyingSubscription(false);
-                      setShowSuccessModal(true);
-                      // Clean up URL query params
-                      const cleanUrl = window.location.pathname;
-                      window.history.replaceState({}, document.title, cleanUrl);
-                    };
-
-                    let isCompleted = false;
-
-                    const startPolling = () => {
-                      if (isCompleted) return;
-                      let attempts = 0;
-                      const maxAttempts = 12; // 18 seconds total
-                      const intervalId = setInterval(() => {
-                        if (isCompleted) {
-                          clearInterval(intervalId);
-                          return;
-                        }
-                        attempts++;
-                        supabase
-                          .from("subscriptions")
-                          .select("*")
-                          .eq("user_id", currentUser.id)
-                          .maybeSingle()
-                          .then(({ data: freshSub }) => {
-                            if (freshSub && freshSub.status === "active") {
-                              isCompleted = true;
-                              clearInterval(intervalId);
-                              cleanAndComplete(freshSub);
-                            } else if (attempts >= maxAttempts) {
-                              clearInterval(intervalId);
-                              setVerifyingSubscription(false);
-                              setShowPendingModal(true);
-                              const cleanUrl = window.location.pathname;
-                              window.history.replaceState({}, document.title, cleanUrl);
-                            }
-                          });
-                      }, 1500);
-                    };
-
-                    // Try immediate confirmation if session_id is available
-                    if (sessionId) {
-                      fetch(`/api/checkout/confirm?session_id=${sessionId}`)
-                        .then((res) => res.json())
-                        .then((data) => {
-                          if (data && data.status === "active") {
-                            isCompleted = true;
-                            cleanAndComplete(data.subscription);
-                          } else {
-                            startPolling();
-                          }
-                        })
-                        .catch((err) => {
-                          console.error("Error confirming checkout session:", err);
-                          startPolling();
-                        });
-                    } else {
-                      startPolling();
-                    }
-                  } else {
-                    // Already active, just show success modal
-                    setShowSuccessModal(true);
-                    setLoading(false);
-                    // Clean up URL query params
-                    const cleanUrl = window.location.pathname;
-                    window.history.replaceState({}, document.title, cleanUrl);
-                  }
-                } else {
-                  // Standard flow
-                  // Auto-sweep expired subscriptions in client browser
-                  if (sub && sub.status === "active" && new Date(sub.current_period_end) < new Date()) {
-                    supabase
-                      .from("subscriptions")
-                      .update({ status: "lapsed" })
-                      .eq("id", sub.id)
-                      .then(() => {
-                        router.push("/subscribe");
-                      });
-                  } else {
-                    setLoading(false);
-                  }
+              .then(({ data: freshSub }) => {
+                if (freshSub && freshSub.status === "active") {
+                  clearInterval(intervalId);
+                  cleanAndComplete(freshSub);
+                } else if (attempts >= 10) {
+                  clearInterval(intervalId);
+                  setVerifyingSubscription(false);
+                  setShowPendingModal(true);
+                  const cleanUrl = window.location.pathname;
+                  window.history.replaceState({}, document.title, cleanUrl);
                 }
               });
-          });
+          }, 1500);
+
+          if (sessionId) {
+            fetch(`/api/checkout/confirm?session_id=${sessionId}`)
+              .then((res) => res.json())
+              .then((data) => {
+                if (data && data.status === "active") {
+                  clearInterval(intervalId);
+                  cleanAndComplete(data.subscription);
+                }
+              })
+              .catch((err) => console.error("Immediate confirmation check failed:", err));
+          }
+        } else {
+          setLoading(false);
+        }
       } else {
         router.push("/login");
       }
     });
-  }, [router]);
-
-  const handleCopyLink = (text = "https://wkchanfyajdivmuummsb.supabase.co") => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+  }, [router, fetchData]);
 
   const handleLogout = async () => {
     const supabase = createClient();
@@ -263,7 +317,116 @@ export default function DashboardPage() {
     router.push("/login");
   };
 
-  // Add round logic
+  // Keyboard shortcut listener for Ctrl+K / Cmd+K Spotlight search
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+        e.preventDefault();
+        setShowSearchModal((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  const commandItems = [
+    { id: "overview", label: "My Dashboard", category: "Navigation", icon: Home, action: () => { setActiveTab("overview"); setShowSearchModal(false); } },
+    { id: "scores", label: "Golf Scorecard", category: "Navigation", icon: Table, action: () => { setActiveTab("scores"); setShowSearchModal(false); } },
+    { id: "charities", label: "Charity Partners", category: "Navigation", icon: Heart, action: () => { setActiveTab("charities"); setShowSearchModal(false); } },
+    { id: "draws", label: "Prize Draws", category: "Navigation", icon: Trophy, action: () => { setActiveTab("draws"); setShowSearchModal(false); } },
+    { id: "settings", label: "Project Settings", category: "Navigation", icon: Settings, action: () => { setActiveTab("settings"); setShowSearchModal(false); } },
+    ...(profile?.role === "admin" ? [{ id: "admin", label: "Admin Console", category: "Navigation", icon: ShieldCheck, action: () => { setActiveTab("admin"); setShowSearchModal(false); } }] : []),
+    { id: "add-score", label: "Log Golf Round", category: "Actions", icon: Plus, action: () => { setShowSearchModal(false); setShowAddScoreModal(true); } },
+    ...(subscription?.status !== "active" ? [{ id: "upgrade", label: "Upgrade to Pro", category: "Actions", icon: Sparkles, action: () => { router.push("/subscribe"); setShowSearchModal(false); } }] : []),
+    { id: "logout", label: "Sign Out", category: "Actions", icon: LogOut, action: () => { handleLogout(); setShowSearchModal(false); } }
+  ];
+
+  const filteredSearchItems = commandItems.filter(item => 
+    item.label.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    item.category.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  useEffect(() => {
+    if (showSearchModal) {
+      setSearchSelectedIndex(0);
+      setSearchQuery("");
+    }
+  }, [showSearchModal]);
+
+  const handleSearchKeyDown = (e) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setSearchSelectedIndex(prev => (prev + 1) % filteredSearchItems.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setSearchSelectedIndex(prev => (prev - 1 + filteredSearchItems.length) % filteredSearchItems.length);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (filteredSearchItems[searchSelectedIndex]) {
+        filteredSearchItems[searchSelectedIndex].action();
+      }
+    } else if (e.key === "Escape") {
+      setShowSearchModal(false);
+    }
+  };
+
+  // Sync sliderValue whenever profile loads / changes
+  useEffect(() => {
+    if (profile?.charity_contribution_percentage != null) {
+      setSliderValue(profile.charity_contribution_percentage);
+    }
+  }, [profile?.charity_contribution_percentage]);
+
+  // User Action: Update charity contribution percentage
+  const handleSliderChange = (e) => {
+    const val = parseFloat(e.target.value);
+    setSliderValue(val >= 10 ? val : 10);
+  };
+
+  // Debounced effect for sliderValue DB synchronization
+  useEffect(() => {
+    if (!user?.id || !profile) return;
+    if (sliderValue === profile.charity_contribution_percentage) return;
+
+    const timer = setTimeout(async () => {
+      setUpdatingSlider(true);
+      const supabase = createClient();
+      const { error } = await supabase
+        .from("profiles")
+        .update({ charity_contribution_percentage: sliderValue })
+        .eq("id", user.id);
+
+      setUpdatingSlider(false);
+      if (error) {
+        triggerToast(error.message, "error");
+      } else {
+        setProfile(prev => ({ ...prev, charity_contribution_percentage: sliderValue }));
+        triggerToast(`Donation share set to ${sliderValue}%!`, "success");
+      }
+    }, 600);
+
+    return () => clearTimeout(timer);
+  }, [sliderValue, user?.id, profile]);
+
+  const handleSliderCommit = () => {};
+
+  // User Action: Select Charity from Directory
+  const handleSupportCharity = async (charityId, charityName) => {
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("profiles")
+      .update({ charity_id: charityId })
+      .eq("id", user.id);
+
+    if (error) {
+      triggerToast(error.message, "error");
+    } else {
+      triggerToast(`Now supporting ${charityName}!`, "success");
+      fetchData();
+    }
+  };
+
+  // User Action: Submit Golf Score
   const handleAddScoreSubmit = async (e) => {
     e.preventDefault();
     setAddErrorMessage("");
@@ -276,7 +439,7 @@ export default function DashboardPage() {
     }
 
     if (!scoreDate) {
-      setAddErrorMessage("Please select a date.");
+      setAddErrorMessage("Please select a valid date.");
       return;
     }
 
@@ -294,21 +457,22 @@ export default function DashboardPage() {
           setAddErrorMessage(data.message);
           setAddDuplicateScoreId(data.existingScoreId);
         } else {
-          setAddErrorMessage(data.message || data.error || "Failed to add score.");
+          setAddErrorMessage(data.message || data.error || "Failed to log score.");
         }
         return;
       }
 
+      triggerToast("Golf score logged successfully!", "success");
       setScoreValue("");
       setShowAddScoreModal(false);
-      fetchScores();
+      fetchData();
     } catch (err) {
-      console.error("Error adding score:", err);
-      setAddErrorMessage("Server communication failed.");
+      console.error(err);
+      setAddErrorMessage("Server connection error.");
     }
   };
 
-  // Edit round logic
+  // User Action: Edit Golf Score
   const handleEditScoreSubmit = async (e) => {
     e.preventDefault();
     setEditErrorMessage("");
@@ -319,11 +483,6 @@ export default function DashboardPage() {
     const scoreVal = parseInt(editScoreValue, 10);
     if (isNaN(scoreVal) || scoreVal < 1 || scoreVal > 45) {
       setEditErrorMessage("Stableford score must be strictly between 1 and 45.");
-      return;
-    }
-
-    if (!editScoreDate) {
-      setEditErrorMessage("Please select a date.");
       return;
     }
 
@@ -346,20 +505,19 @@ export default function DashboardPage() {
         return;
       }
 
+      triggerToast("Golf score updated successfully!", "success");
       setEditingScore(null);
-      setEditScoreValue("");
-      setEditScoreDate("");
       setShowEditScoreModal(false);
-      fetchScores();
+      fetchData();
     } catch (err) {
-      console.error("Error updating score:", err);
-      setEditErrorMessage("Server communication failed.");
+      console.error(err);
+      setEditErrorMessage("Server connection error.");
     }
   };
 
-  // Delete round logic
+  // User Action: Delete Golf Score
   const handleDeleteScore = async (id) => {
-    if (!window.confirm("Are you sure you want to delete this score?")) return;
+    if (!window.confirm("Are you sure you want to delete this score card?")) return;
 
     try {
       const response = await fetch(`/api/scores?id=${id}`, {
@@ -367,21 +525,74 @@ export default function DashboardPage() {
       });
 
       if (response.ok) {
-        fetchScores();
-        if (editingScore?.id === id) {
-          setShowEditScoreModal(false);
-          setEditingScore(null);
-        }
+        triggerToast("Score deleted successfully.");
+        fetchData();
       } else {
         const data = await response.json();
-        alert(data.message || "Failed to delete score.");
+        triggerToast(data.message || "Failed to delete score.", "error");
       }
     } catch (err) {
-      console.error("Error deleting score:", err);
-      alert("Server communication failed.");
+      console.error(err);
+      triggerToast("Server connection error.", "error");
     }
   };
 
+  // User Action: Submit winner proof screenshot (base64 conversion)
+  const handleWinnerProofUpload = async (e, winnerId) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64Data = reader.result;
+      const supabase = createClient();
+      
+      const { error } = await supabase
+        .from("winners")
+        .update({
+          proof_image_url: base64Data,
+          verification_status: "pending"
+        })
+        .eq("id", winnerId);
+
+      if (error) {
+        triggerToast(error.message, "error");
+      } else {
+        triggerToast("Proof screenshot uploaded successfully! Awaiting review.", "success");
+        fetchData();
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // User Action: Save General Settings (Name, Charity, and Contribution Percentage)
+  const handleSaveSettings = async (e) => {
+    e.preventDefault();
+    if (editContributionPercentage < 10) {
+      triggerToast("Charity contribution percentage cannot be less than 10%", "error");
+      return;
+    }
+    setSavingSettings(true);
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("profiles")
+      .update({
+        full_name: editName,
+        charity_id: editCharityId || null,
+        charity_contribution_percentage: editContributionPercentage
+      })
+      .eq("id", user.id);
+
+    setSavingSettings(false);
+    if (error) {
+      triggerToast(error.message, "error");
+    } else {
+      triggerToast("Profile settings updated successfully!", "success");
+      fetchData();
+    }
+  };
+
+  // Open Score Edit modal
   const openEditModal = (scoreObj) => {
     setEditingScore(scoreObj);
     setEditScoreValue(scoreObj.score_value.toString());
@@ -391,45 +602,280 @@ export default function DashboardPage() {
     setShowEditScoreModal(true);
   };
 
-  // Run SQL Query simulation
-  const handleRunQuery = () => {
-    setQueryRunning(true);
-    setTimeout(() => {
-      setQueryRunning(false);
-      if (selectedQuery === "select_draws") {
-        setQueryResult([
-          { month: "June", year: 2026, draw_type: "five_match", logic_type: "random", status: "published", prize_pool_amount: "£10,250", jackpot_rollover_amount: "£8,000" },
-          { month: "June", year: 2026, draw_type: "four_match", logic_type: "algorithmic", status: "simulated", prize_pool_amount: "£2,450", jackpot_rollover_amount: "£0" },
-          { month: "May", year: 2026, draw_type: "five_match", logic_type: "random", status: "published", prize_pool_amount: "£9,800", jackpot_rollover_amount: "£6,500" }
-        ]);
+  // ============================================================
+  // ADMIN PANEL SUB-ACTIONS
+  // ============================================================
+
+  // Admin User: Change role
+  const handleAdminChangeRole = async (userId, currentRole) => {
+    const newRole = currentRole === "admin" ? "subscriber" : "admin";
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "update_profile", userId, role: newRole })
+      });
+      if (res.ok) {
+        triggerToast(`Updated user role to ${newRole}`);
+        fetchAdminData();
       } else {
-        setQueryResult([
-          { user_id: "usr_91238a", total_entries: 3, last_played: "2026-06-19" },
-          { user_id: "usr_77219c", total_entries: 2, last_played: "2026-06-15" },
-          { user_id: "usr_55610d", total_entries: 5, last_played: "2026-06-20" }
-        ]);
+        const d = await res.json();
+        triggerToast(d.error || "Failed to update role", "error");
       }
-    }, 600);
+    } catch (e) {
+      console.error(e);
+    }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-[#181818] flex items-center justify-center text-white font-sans">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-8 h-8 rounded-full border-2 border-[#3ecf8e] border-t-transparent animate-spin" />
-          <p className="text-[13px] text-zinc-400">Loading CauseLoop Studio...</p>
-        </div>
-      </div>
-    );
-  }
+  // Admin User: Toggle subscription status
+  const handleAdminToggleSubscription = async (userId, currentStatus) => {
+    const nextStatus = currentStatus === "active" ? "lapsed" : "active";
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "update_subscription", userId, subStatus: nextStatus })
+      });
+      if (res.ok) {
+        triggerToast(`Subscription set to ${nextStatus}`);
+        fetchAdminData();
+      } else {
+        const d = await res.json();
+        triggerToast(d.error || "Failed to update subscription", "error");
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
-  const userEmail = user?.email || "tepo1744@gmail.com";
-  const orgName = `${userEmail}'s Org`;
+  // Admin User: Delete user score
+  const handleAdminDeleteScore = async (scoreId) => {
+    if (!window.confirm("Delete this user's score row?")) return;
+    try {
+      const res = await fetch(`/api/admin/users?scoreId=${scoreId}`, {
+        method: "DELETE"
+      });
+      if (res.ok) {
+        triggerToast("User score deleted successfully.");
+        fetchAdminData();
+        // Refresh local view if matching user
+        if (selectedUserScores) {
+          setSelectedUserScores(prev => ({
+            ...prev,
+            scores: prev.scores.filter(s => s.id !== scoreId)
+          }));
+        }
+      } else {
+        const d = await res.json();
+        triggerToast(d.error || "Failed to delete score", "error");
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Admin User: Add Charity
+  const handleAdminAddCharity = async (e) => {
+    e.preventDefault();
+    if (!newCharityName || !newCharityDesc) {
+      alert("Name and description are required.");
+      return;
+    }
+
+    const supabase = createClient();
+    const { error } = await supabase.from("charities").insert({
+      name: newCharityName,
+      description: newCharityDesc,
+      image_urls: newCharityImg ? [newCharityImg] : [],
+      is_featured: newCharityFeatured
+    });
+
+    if (error) {
+      triggerToast(error.message, "error");
+    } else {
+      triggerToast(`Added charity partner "${newCharityName}"!`);
+      setNewCharityName("");
+      setNewCharityDesc("");
+      setNewCharityImg("");
+      setNewCharityFeatured(false);
+      setShowAddCharityModal(false);
+      fetchAdminData();
+      fetchData();
+    }
+  };
+
+  // Admin User: Delete Charity
+  const handleAdminDeleteCharity = async (charityId) => {
+    if (!window.confirm("Are you sure you want to delete this charity partner? All users connected will be unset.")) return;
+    const supabase = createClient();
+    const { error } = await supabase.from("charities").delete().eq("id", charityId);
+    if (error) {
+      triggerToast(error.message, "error");
+    } else {
+      triggerToast("Charity deleted successfully.");
+      fetchAdminData();
+      fetchData();
+    }
+  };
+
+  // Admin User: Verify Winner Claim (Approve / Reject)
+  const handleAdminWinnerVerify = async (winnerId, status) => {
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "verify_winner", winnerId, verificationStatus: status })
+      });
+      if (res.ok) {
+        triggerToast(`Claim verification updated to "${status}"`);
+        fetchAdminData();
+      } else {
+        const d = await res.json();
+        triggerToast(d.error || "Failed to verify", "error");
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Admin User: Complete Winner Payout
+  const handleAdminWinnerPay = async (winnerId) => {
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "verify_winner", winnerId, paymentStatus: "paid" })
+      });
+      if (res.ok) {
+        triggerToast("Payout marked as completed.");
+        fetchAdminData();
+      } else {
+        const d = await res.json();
+        triggerToast(d.error || "Failed to update payout", "error");
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Admin User: Simulate and Calculate Draws logic
+  const handleRunSimulation = () => {
+    setDrawSimulating(true);
+    setSimulationResults(null);
+
+    setTimeout(() => {
+      const winningNums = [];
+      while (winningNums.length < 5) {
+        const num = Math.floor(Math.random() * 45) + 1;
+        if (!winningNums.includes(num)) {
+          winningNums.push(num);
+        }
+      }
+      winningNums.sort((a, b) => a - b);
+
+      const activeSubs = adminProfiles.filter(p => p.subscriptions?.some(s => s.status === "active"));
+      const totalPrizePool = activeSubs.length * 12.00 * 0.40;
+
+      const results = {
+        month: parseInt(drawMonth),
+        year: parseInt(drawYear),
+        logic_type: drawLogic,
+        winning_numbers: winningNums,
+        total_subscribers: activeSubs.length,
+        prize_pool_amount: totalPrizePool,
+        winners: []
+      };
+
+      activeSubs.forEach(u => {
+        const userNums = (u.scores || []).map(s => s.score_value);
+        if (userNums.length > 0) {
+          const matches = userNums.filter(n => winningNums.includes(n));
+          if (matches.length >= 3) {
+            results.winners.push({
+              user_id: u.id,
+              full_name: u.full_name || u.email || "Unnamed",
+              numbers_played: userNums,
+              match_count: matches.length,
+              prize_amount: matches.length === 5 ? (totalPrizePool * 0.40) : (matches.length === 4 ? (totalPrizePool * 0.35) : (totalPrizePool * 0.25))
+            });
+          }
+        }
+      });
+
+      setSimulationResults(results);
+      setDrawSimulating(false);
+      triggerToast("Draw simulation completed! Review details below.");
+    }, 1500);
+  };
+
+  // Admin User: Publish simulated draw results
+  const handlePublishDraw = async () => {
+    if (!simulationResults) return;
+
+    const supabase = createClient();
+    const { data: drawRow, error: drawErr } = await supabase
+      .from("draws")
+      .insert({
+        month: simulationResults.month,
+        year: simulationResults.year,
+        draw_type: "five_match",
+        logic_type: simulationResults.logic_type,
+        status: "published",
+        winning_numbers: simulationResults.winning_numbers,
+        prize_pool_amount: simulationResults.prize_pool_amount,
+        jackpot_rollover_amount: simulationResults.winners.some(w => w.match_count === 5) ? 0.00 : (simulationResults.prize_pool_amount * 0.40)
+      })
+      .select()
+      .single();
+
+    if (drawErr) {
+      triggerToast("Publishing draw failed: " + drawErr.message, "error");
+      return;
+    }
+
+    for (const w of simulationResults.winners) {
+      await supabase.from("draw_entries").insert({
+        draw_id: drawRow.id,
+        user_id: w.user_id,
+        numbers_played: w.numbers_played,
+        match_count: w.match_count,
+        prize_amount: w.prize_amount
+      });
+
+      await supabase.from("winners").insert({
+        draw_id: drawRow.id,
+        user_id: w.user_id,
+        verification_status: "pending",
+        payment_status: "pending"
+      });
+    }
+
+    triggerToast(`Published draw results for ${simulationResults.month}/${simulationResults.year}!`);
+    setSimulationResults(null);
+    fetchAdminData();
+    fetchData();
+  };
+
+  const userEmail = user?.email || "";
+  const activeCharity = profile?.charities;
+  const userRole = profile?.role || "subscriber";
 
   return (
     <div className="h-screen bg-[#181818] text-[#e4e4e7] flex flex-col font-sans select-none overflow-hidden">
       
-      {/* ── TOP NAV BAR (Supabase-Style) ── */}
+      {/* ── TOAST MESSAGES ── */}
+      {toastMessage && (
+        <div className={`fixed top-4 right-4 px-4 py-3 rounded-xl border shadow-2xl flex items-center gap-2.5 z-50 animate-fadeInUp ${
+          toastType === "error" 
+            ? "bg-red-500/10 border-red-500/25 text-red-400" 
+            : "bg-emerald-500/10 border-emerald-500/25 text-emerald-400"
+        }`}>
+          {toastType === "error" ? <XCircle size={16} /> : <CheckCircle2 size={16} />}
+          <span className="text-[12.5px] font-medium">{toastMessage}</span>
+        </div>
+      )}
+
+      {/* ── TOP NAV BAR (Supabase-Style Breadcrumb & Apple Island search shell) ── */}
       <header className="h-[46px] bg-[#111111] border-b border-[#222] flex items-center px-4 justify-between sticky top-0 z-40 text-white shrink-0">
         <div className="flex items-center gap-2">
           {/* CauseLoop Logo */}
@@ -437,78 +883,40 @@ export default function DashboardPage() {
             <Logo size={18} />
           </Link>
 
-          <span className="text-[#333] text-lg font-light">/</span>
-
-          {/* Org Selector */}
-          <div className="flex items-center gap-1.5 px-2 py-1 hover:bg-[#1a1a1e] rounded cursor-pointer transition-colors text-[12px] font-medium text-zinc-300">
-            <span>{orgName}</span>
-            <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider scale-90 ${
-              profile?.role === "admin"
-                ? "bg-indigo-500/10 border border-indigo-500/30 text-indigo-400"
-                : (subscription?.status === "active"
-                  ? "bg-[#3ecf8e]/10 border border-[#3ecf8e]/30 text-[#3ecf8e]"
-                  : "bg-[#222] border border-[#333] text-zinc-400")
-            }`}>
-              {profile?.role === "admin" ? "Admin" : (subscription?.status === "active" ? "Pro" : "Free")}
-            </span>
-            <ChevronDown size={11} className="text-zinc-500" />
-          </div>
-
-          <span className="text-[#333] text-lg font-light">/</span>
-
-          {/* Project Selector */}
-          <div className="flex items-center gap-1.5 px-2 py-1 hover:bg-[#1a1a1e] rounded cursor-pointer transition-colors text-[12px] font-medium text-zinc-300">
-            <span>{projectName}</span>
-            <ChevronDown size={11} className="text-zinc-500" />
-          </div>
-
-          <span className="text-[#333] text-lg font-light">/</span>
-
-          {/* Branch Selector */}
-          <div className="flex items-center gap-1.5 px-2 py-1 hover:bg-[#1a1a1e] rounded cursor-pointer transition-colors text-[12px] font-medium text-zinc-300">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#3ecf8e]" />
-            <span>main</span>
-            <ChevronDown size={11} className="text-zinc-500" />
-          </div>
-
-          {/* Connect Button */}
-          <button className="h-[24px] px-2.5 bg-[#3ecf8e]/10 hover:bg-[#3ecf8e]/20 border border-[#3ecf8e]/20 text-[#3ecf8e] text-[11px] font-bold rounded flex items-center gap-1 transition-all ml-2">
-            <svg width={10} height={10} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
-            </svg>
-            Connect
-          </button>
         </div>
 
-        {/* Right Nav Options */}
+        {/* Right Nav Options with original search bar and hover profile menus */}
         <div className="flex items-center gap-3">
           <span className="text-[11px] text-zinc-400 hover:text-white bg-[#1e1e1e] border border-[#2e2e2e] px-2.5 py-0.5 rounded cursor-pointer transition-all">
             Feedback
           </span>
 
-          {/* Search Box */}
-          <div className="h-[24px] px-2.5 border border-[#2e2e2e] bg-[#141414] text-zinc-500 rounded flex items-center gap-3 text-[11.5px] cursor-pointer hover:border-zinc-700 transition-all">
-            <Search size={11} />
-            <span>Search...</span>
-            <span className="text-[9px] bg-[#1a1a1c] px-1 rounded border border-[#2e2e2e] font-mono">Ctrl K</span>
+          {/* Apple Floating Island Search Box (Hover Effect) */}
+          <div 
+            onClick={() => setShowSearchModal(true)}
+            className="h-[24px] px-2.5 border border-[#2e2e2e] bg-[#141414] text-zinc-500 rounded flex items-center gap-3 text-[11.5px] cursor-pointer hover:border-zinc-700 hover:bg-zinc-900/40 transition-all group"
+          >
+            <Search size={11} className="group-hover:text-zinc-300 transition-colors" />
+            <span className="group-hover:text-zinc-300 transition-colors">Search...</span>
+            <span className="text-[9px] bg-[#1a1a1c] px-1 rounded border border-[#2e2e2e] font-mono group-hover:border-zinc-600 transition-colors">Ctrl K</span>
           </div>
 
           <HelpCircle size={15} className="text-zinc-400 hover:text-white cursor-pointer transition-colors" />
           <Bell size={15} className="text-zinc-400 hover:text-white cursor-pointer transition-colors" />
 
-          {/* User Profile Dropdown */}
+          {/* User Profile Gradient Dropdown (Hover Popover) */}
           <div className="relative group cursor-pointer">
             <div className="w-6 h-6 rounded-full bg-gradient-to-br from-[#5227FF] to-purple-600 border border-zinc-700 flex items-center justify-center font-bold text-white text-[10px] select-none shadow-sm">
-              {userEmail[0].toUpperCase()}
+              {userEmail ? userEmail[0].toUpperCase() : "U"}
             </div>
             <div className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full border border-[#111111] ${
               subscription?.status === "active" ? "bg-[#3ecf8e]" : "bg-zinc-500"
             }`} />
             
-            {/* Popover */}
+            {/* Hover Popover */}
             <div className="absolute right-0 mt-2 w-48 bg-[#141414] border border-[#2e2e2e] rounded-lg shadow-2xl py-1.5 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 z-50">
               <div className="px-4 py-2 border-b border-zinc-900">
-                <p className="text-[10px] text-zinc-500 truncate">Signed in as</p>
+                <p className="text-[10px] text-zinc-500 truncate font-mono">Signed in as</p>
                 <p className="text-[12px] font-semibold text-white truncate mt-0.5">{userEmail}</p>
               </div>
               {subscription?.status === "active" ? (
@@ -543,15 +951,66 @@ export default function DashboardPage() {
       {/* ── MAIN WORKSPACE CONTAINER ── */}
       <div className="flex-1 flex overflow-hidden relative">
         
-        {/* ── LEFT SIDEBAR (Supabase studio look) ── */}
+        {/* ── LEFT SIDEBAR (Original Supabase structure: Settings & Logout at bottom) ── */}
         <aside className="w-[46px] bg-[#111111] border-r border-[#222] flex flex-col justify-between items-center py-4 shrink-0 z-30 overflow-hidden select-none">
           <div className="flex flex-col gap-1.5 w-full items-center">
+            
+            {/* User Profile Avatar Popover at top of sidebar */}
+            <div className="relative group cursor-pointer w-full flex justify-center pb-3 border-b border-[#222] mb-2">
+              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#5227FF] to-purple-600 border border-zinc-700 flex items-center justify-center font-bold text-white text-[11px] select-none shadow-sm transition-transform hover:scale-105">
+                {userEmail ? userEmail[0].toUpperCase() : "U"}
+              </div>
+              <div className={`absolute bottom-2.5 right-2.5 w-2 h-2 rounded-full border border-[#111111] ${
+                subscription?.status === "active" ? "bg-[#3ecf8e]" : "bg-zinc-500"
+              }`} />
+              
+              {/* Popover on Hover (opens to the right) */}
+              <div className="absolute left-12 top-0 w-52 bg-[#141414]/95 border border-[#2e2e2e] rounded-xl shadow-2xl py-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 z-50 backdrop-blur-md">
+                <div className="px-4 py-2 border-b border-zinc-900">
+                  <p className="text-[10px] text-zinc-500 truncate font-mono">Signed in as</p>
+                  <p className="text-[12px] font-semibold text-white truncate mt-0.5">{userEmail}</p>
+                </div>
+                <div className="py-1">
+                  {subscription?.status === "active" ? (
+                    <a
+                      href="/api/portal"
+                      className="w-full text-left px-4 py-2 text-[12px] text-zinc-300 hover:text-white hover:bg-zinc-900/50 transition-colors flex items-center gap-2"
+                    >
+                      <CreditCard size={12} className="text-[#3ecf8e]" />
+                      Manage Billing
+                    </a>
+                  ) : (
+                    <Link
+                      href="/subscribe"
+                      className="w-full text-left px-4 py-2 text-[12px] text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/5 transition-colors flex items-center gap-2 font-bold"
+                    >
+                      <Sparkles size={12} className="text-indigo-400 animate-pulse" />
+                      Upgrade to Pro
+                    </Link>
+                  )}
+                  <button
+                    onClick={() => setActiveTab("settings")}
+                    className="w-full text-left px-4 py-2 text-[12px] text-zinc-300 hover:text-white hover:bg-zinc-900/50 transition-colors flex items-center gap-2"
+                  >
+                    <Settings size={12} className="text-zinc-400" />
+                    Settings
+                  </button>
+                  <button
+                    onClick={handleLogout}
+                    className="w-full text-left px-4 py-2 text-[12px] text-red-400 hover:text-red-300 hover:bg-red-500/5 transition-colors flex items-center gap-2 border-t border-zinc-900/50 mt-1"
+                  >
+                    <LogOut size={12} />
+                    Sign Out
+                  </button>
+                </div>
+              </div>
+            </div>
+
             {[
-              { id: "overview", label: "Project Overview", icon: Home },
-              { id: "scores", label: "Table Editor", icon: Table },
-              { id: "draws", label: "SQL Editor", icon: Terminal },
-              { id: "charities", label: "Database Explorer", icon: Database },
-              { id: "pricing", label: "Storage Browser", icon: FolderOpen },
+              { id: "overview", label: "My Dashboard", icon: Home },
+              { id: "scores", label: "Golf Scorecard", icon: Table },
+              { id: "charities", label: "Charity Partners", icon: Heart },
+              { id: "draws", label: "Prize Draws", icon: Trophy },
             ].map((item) => {
               const Icon = item.icon;
               const isActive = activeTab === item.id;
@@ -566,20 +1025,36 @@ export default function DashboardPage() {
                       : "text-zinc-400 hover:text-white hover:bg-[#1a1a1f]"
                   }`}
                 >
-                  {/* Left Active Marker */}
                   {isActive && <div className="absolute left-0 top-1.5 bottom-1.5 w-[2px] bg-[#3ecf8e] rounded" />}
                   <Icon size={16} />
-                  
-                  {/* Label tooltip on hover */}
                   <span className="absolute left-12 px-2.5 py-1 bg-[#1c1c1e] text-[11px] text-white rounded border border-[#2e2e2e] shadow-xl font-medium tracking-wide whitespace-nowrap opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-100 z-50">
                     {item.label}
                   </span>
                 </button>
               );
             })}
+
+            {/* Admin tab visible if role is admin */}
+            {userRole === "admin" && (
+              <button
+                onClick={() => setActiveTab("admin")}
+                title="Admin Console"
+                className={`w-9 h-9 rounded flex items-center justify-center relative group transition-all ${
+                  activeTab === "admin"
+                    ? "text-[#3ecf8e] bg-[#1d2c25]"
+                    : "text-zinc-400 hover:text-emerald-400 hover:bg-[#1a1a1f]"
+                }`}
+              >
+                {activeTab === "admin" && <div className="absolute left-0 top-1.5 bottom-1.5 w-[2px] bg-[#3ecf8e] rounded" />}
+                <ShieldCheck size={16} />
+                <span className="absolute left-12 px-2.5 py-1 bg-[#1c1c1e] text-[11px] text-white rounded border border-[#2e2e2e] shadow-xl font-medium tracking-wide whitespace-nowrap opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-100 z-50">
+                  Admin Console
+                </span>
+              </button>
+            )}
           </div>
 
-          {/* Bottom Settings Link & Logout */}
+          {/* Bottom Settings Link (Settings button at the bottom of sidebar) */}
           <div className="flex flex-col gap-1 w-full items-center">
             <button
               onClick={() => setActiveTab("settings")}
@@ -596,575 +1071,613 @@ export default function DashboardPage() {
                 Project Settings
               </span>
             </button>
-
-            <button
-              onClick={handleLogout}
-              title="Sign Out"
-              className="w-9 h-9 rounded flex items-center justify-center text-zinc-500 hover:text-red-400 hover:bg-red-500/10 transition-all group relative"
-            >
-              <LogOut size={16} />
-              <span className="absolute left-12 px-2.5 py-1 bg-[#1c1c1e] text-[11px] text-white rounded border border-[#2e2e2e] shadow-xl font-medium tracking-wide whitespace-nowrap opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-100 z-50">
-                Sign Out
-              </span>
-            </button>
           </div>
         </aside>
 
         {/* ── MAIN WORKSPACE CONTENT ── */}
-        <main className="flex-1 bg-[#181818] overflow-y-auto relative p-6 md:p-8 flex flex-col justify-start">
+        <main className="flex-1 bg-[#111] overflow-y-auto relative">
+          <div className="max-w-[960px] mx-auto px-8 py-8">
 
           {/* ============================================================ */}
-          {/* TAB 1: PROJECT OVERVIEW                                      */}
+          {/* TAB 1: DASHBOARD OVERVIEW                                    */}
           {/* ============================================================ */}
           {activeTab === "overview" && (
-            <div className="max-w-[1200px] w-full mx-auto space-y-6 animate-fadeInUp">
-              
-              {/* Header Title Grid Row */}
-              <div className="flex flex-col lg:flex-row justify-between lg:items-start gap-6 pb-6 border-b border-[#222]">
-                <div className="space-y-1.5">
-                  <h1 className="text-[22px] font-bold text-white tracking-tight leading-tight">{projectName}</h1>
-                  
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[11.5px] text-zinc-400 font-mono select-text bg-[#111] border border-[#2e2e2e] px-2.5 py-0.5 rounded flex items-center gap-1.5">
-                      https://wkchanfyajdivmuummsb.supabase.co
+            <div className="space-y-6 animate-fadeInUp">
+
+              {/* ── Page Header ── */}
+              <div className="flex items-start justify-between">
+                <div>
+                  <h1 className="text-[17px] font-semibold text-white tracking-tight">Welcome back, {profile?.full_name?.split(" ")[0] || "Golfer"}</h1>
+                  <p className="text-[12.5px] text-zinc-500 mt-0.5">Subscription, performance and charity details at a glance.</p>
+                </div>
+                <div className="flex items-center gap-1.5 text-[11px] text-zinc-600 bg-[#161616] border border-[#222] px-2.5 py-1.5 rounded-lg">
+                  <Activity size={11} className="text-[#3ecf8e]" />
+                  <span>Live</span>
+                </div>
+              </div>
+
+              {/* ── Stat Cards ── */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                {/* 1. Subscription */}
+                <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl p-4 flex flex-col gap-3 hover:border-[#2a2a2a] transition-all cursor-default">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10.5px] text-zinc-500 font-medium">Membership</span>
+                    <span className={`text-[9.5px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
+                      userRole === "admin"
+                        ? "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20"
+                        : subscription?.status === "active"
+                          ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                          : "bg-zinc-800 text-zinc-500 border border-zinc-700/50"
+                    }`}>
+                      {userRole === "admin" ? "Admin" : subscription?.status === "active" ? "Active" : "Free"}
                     </span>
-                    <button
-                      onClick={() => handleCopyLink()}
-                      className="text-zinc-500 hover:text-white p-1 rounded hover:bg-[#222] border border-[#2e2e2e] bg-[#1e1e1e] transition-all"
-                      title="Copy Project URL"
-                    >
-                      {copied ? <Check size={12} className="text-[#3ecf8e]" /> : <Copy size={12} />}
+                  </div>
+                  <div>
+                    <p className="text-[22px] font-bold text-white capitalize leading-none">{subscription?.plan_type || "No Plan"}</p>
+                    <p className="text-[11px] text-zinc-500 mt-1.5">{subscription?.status === "active" ? "Pro access enabled" : "Free tier"}</p>
+                  </div>
+                  <div className="pt-2 border-t border-[#1e1e1e]">
+                    {subscription?.status === "active" ? (
+                      <a href="/api/portal" className="text-[11px] text-zinc-400 hover:text-white flex items-center gap-1 transition-colors">
+                        Manage billing <ExternalLink size={9} />
+                      </a>
+                    ) : (
+                      <Link href="/subscribe" className="text-[11px] text-[#3ecf8e] hover:text-emerald-300 flex items-center gap-1 font-medium transition-colors">
+                        Upgrade <Sparkles size={9} />
+                      </Link>
+                    )}
+                  </div>
+                </div>
+
+                {/* 2. Latest Score */}
+                <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl p-4 flex flex-col gap-3 hover:border-[#2a2a2a] transition-all cursor-default">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10.5px] text-zinc-500 font-medium">Latest Score</span>
+                    <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/50 uppercase tracking-wider">Stableford</span>
+                  </div>
+                  <div>
+                    <p className="text-[22px] font-bold text-white leading-none">
+                      {scores.length > 0 ? scores[0].score_value : "—"}
+                    </p>
+                    <p className="text-[11px] text-zinc-500 mt-1.5">{scores.length} of 5 rounds logged</p>
+                  </div>
+                  <div className="pt-2 border-t border-[#1e1e1e]">
+                    <button onClick={() => setActiveTab("scores")} className="text-[11px] text-[#3ecf8e] hover:text-emerald-300 flex items-center gap-1 font-medium transition-colors">
+                      View scorecard <ChevronRight size={10} />
                     </button>
                   </div>
                 </div>
 
-                {/* Sub status blocks (Matches top block in screenshot) */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 w-full lg:w-auto">
-                  {[
-                    { label: "Status", value: "Healthy", indicator: "bg-[#3ecf8e]" },
-                    { label: "Compute", value: "NANO" },
-                    { label: "Github", value: "No repository connected", textDim: true },
-                    { label: "Recent Branch", value: "No branches", textDim: true },
-                    { label: "Last Migration", value: "No migrations", textDim: true },
-                    { label: "Last Backup", value: "No backups", textDim: true }
-                  ].map((stat, i) => (
-                    <div key={i} className="bg-[#141414] border border-[#222] rounded-lg p-2.5 flex flex-col justify-between min-w-[100px] h-[64px]">
-                      <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">{stat.label}</span>
-                      <div className="flex items-center gap-1.5 mt-1">
-                        {stat.indicator && <span className={`w-1.5 h-1.5 rounded-full ${stat.indicator} animate-pulse`} />}
-                        <span className={`text-[12px] font-bold truncate ${stat.textDim ? "text-zinc-500 font-medium" : "text-white"}`}>
-                          {stat.value}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
+                {/* 3. Draw Entry */}
+                <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl p-4 flex flex-col gap-3 hover:border-[#2a2a2a] transition-all cursor-default">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10.5px] text-zinc-500 font-medium">Draw Entry</span>
+                    <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/50 uppercase tracking-wider">Monthly</span>
+                  </div>
+                  <div>
+                    <p className="text-[22px] font-bold text-white leading-none">{scores.length > 0 ? "1" : "0"}</p>
+                    <p className="text-[11px] text-zinc-500 mt-1.5">{scores.length > 0 ? "Ticket active · Jul 2026" : "Log scores to enter"}</p>
+                  </div>
+                  <div className="pt-2 border-t border-[#1e1e1e]">
+                    <button onClick={() => setActiveTab("draws")} className="text-[11px] text-zinc-400 hover:text-white flex items-center gap-1 transition-colors">
+                      View draw pool <ChevronRight size={10} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* 4. Winnings */}
+                <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl p-4 flex flex-col gap-3 hover:border-[#2a2a2a] transition-all cursor-default">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10.5px] text-zinc-500 font-medium">Winnings</span>
+                    {winners.length > 0 && (
+                      <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase tracking-wider">Won</span>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-[22px] font-bold text-emerald-400 leading-none">
+                      £{winners.reduce((acc, w) => acc + (w.draws?.prize_pool_amount ? 120.00 : 0.00), 0.00).toFixed(2)}
+                    </p>
+                    <p className="text-[11px] text-zinc-500 mt-1.5">{winners.length} claim{winners.length !== 1 ? "s" : ""} detected</p>
+                  </div>
+                  <div className="pt-2 border-t border-[#1e1e1e]">
+                    <span className="text-[11px] text-zinc-400">Payout status</span>
+                  </div>
                 </div>
               </div>
 
-              {/* Main Overview Grid Layout (Split Left Content vs Right Server graphic) */}
-              <div className="grid lg:grid-cols-3 gap-6">
-                
-                {/* Left Columns (Get Connected & Total Requests) */}
-                <div className="lg:col-span-2 space-y-6">
-                  
-                  {/* Get Connected Grid Panel (Matches screenshot layout) */}
-                  <div className="space-y-3">
-                    <h3 className="text-[11px] uppercase tracking-wider font-bold text-zinc-500 flex items-center gap-1.5">
-                      <Layers size={11} className="text-zinc-500" />
-                      Get connected
-                    </h3>
-                    
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                      {[
-                        { title: "Framework", desc: "Use a client library", icon: Sparkles },
-                        { title: "Server", desc: "Build APIs", icon: Server },
-                        { title: "Direct", desc: "Connection string", icon: Terminal },
-                        { title: "ORM", desc: "Third-party library", icon: Cpu },
-                        { title: "MCP", desc: "Connect your agent", icon: Bot },
-                        { title: "API Keys", desc: "Manage project keys", icon: Key }
-                      ].map((item, i) => {
-                        const IconComp = item.icon;
-                        return (
-                          <div
-                            key={i}
-                            className="bg-[#141414] border border-[#222] hover:border-zinc-700 rounded-lg p-4 flex items-start gap-3.5 cursor-pointer hover:bg-[#1c1c1f]/50 transition-all duration-150 group"
-                          >
-                            <div className="w-8 h-8 rounded-lg bg-zinc-900 border border-[#2e2e2e] flex items-center justify-center text-zinc-400 group-hover:text-[#3ecf8e] group-hover:border-[#3ecf8e]/30 transition-colors shrink-0">
-                              <IconComp size={15} />
-                            </div>
-                            <div className="space-y-0.5 min-w-0">
-                              <h4 className="text-[12.5px] font-bold text-white group-hover:text-[#3ecf8e] transition-colors">{item.title}</h4>
-                              <p className="text-[11.5px] text-zinc-500 truncate">{item.desc}</p>
-                            </div>
-                          </div>
-                        );
-                      })}
+              {/* ── Charity Donation Panel ── */}
+              <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl overflow-hidden">
+                {/* Panel Header */}
+                <div className="flex items-center justify-between px-5 py-4 border-b border-[#1e1e1e]">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-6 h-6 rounded-md bg-rose-500/10 border border-rose-500/15 flex items-center justify-center">
+                      <Heart size={12} className="text-rose-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-[13px] font-semibold text-white">Charity Contribution</h3>
+                      <p className="text-[11px] text-zinc-500">Set your monthly donation split</p>
                     </div>
                   </div>
+                  <button
+                    onClick={() => setActiveTab("charities")}
+                    className="h-7 px-3 bg-transparent border border-[#272727] hover:border-[#333] text-[11px] text-zinc-400 hover:text-white rounded-lg transition-all font-medium"
+                  >
+                    Change partner
+                  </button>
+                </div>
 
-                  {/* 11 Total Requests Section */}
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center">
-                      <h3 className="text-[11px] uppercase tracking-wider font-bold text-zinc-500">
-                        11 Total Requests
-                      </h3>
-                      <div className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-400 bg-[#141414] border border-[#222] px-2 py-0.5 rounded cursor-pointer hover:text-white hover:bg-[#1a1a1f] transition-all">
-                        <span>Last 60 minutes</span>
-                        <ChevronDown size={10} />
+                {activeCharity ? (
+                  <div className="p-5 grid md:grid-cols-2 gap-5">
+                    {/* Left — Charity Info */}
+                    <div className="flex items-start gap-3.5 p-4 bg-[#111] border border-[#1e1e1e] rounded-xl">
+                      {activeCharity.image_urls && activeCharity.image_urls.length > 0 ? (
+                        <img
+                          src={activeCharity.image_urls[0]}
+                          alt={activeCharity.name}
+                          className="w-9 h-9 rounded-lg object-cover border border-[#222] shrink-0"
+                        />
+                      ) : (
+                        <div className="w-9 h-9 rounded-lg bg-rose-500/10 border border-rose-500/15 flex items-center justify-center shrink-0">
+                          <Heart size={14} className="text-rose-400" />
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <span className="text-[9.5px] text-rose-400 font-bold uppercase tracking-widest block">Active Partner</span>
+                        <h4 className="text-[13px] font-semibold text-white mt-0.5 leading-tight">{activeCharity.name}</h4>
+                        <p className="text-[11.5px] text-zinc-500 mt-1.5 leading-relaxed line-clamp-3">{activeCharity.description}</p>
                       </div>
                     </div>
 
-                    <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-3">
-                      {[
-                        { title: "Database Requests", val: "3", active: true, bars: [5, 20, 45, 95, 60, 40, 20, 10, 5, 0, 0, 0] },
-                        { title: "Auth Requests", val: "8", active: true, bars: [10, 60, 85, 30, 70, 95, 40, 20, 15, 0, 0, 0] },
-                        { title: "Storage Requests", val: "0", active: false, bars: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
-                        { title: "Realtime Requests", val: "0", active: false, bars: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }
-                      ].map((item, i) => (
-                        <div key={i} className="bg-[#141414] border border-[#222] rounded-lg p-4 flex flex-col justify-between h-[145px]">
-                          <div>
-                            <p className="text-[9px] text-zinc-500 uppercase tracking-widest font-extrabold">{item.title}</p>
-                            <p className="text-[20px] font-black text-white mt-0.5">{item.val}</p>
-                          </div>
-                          
-                          {/* Dotted/Bar chart representation */}
-                          <div className="h-[40px] flex items-end gap-1 pt-2">
-                            {item.bars.map((bVal, idx) => (
-                              <div
-                                key={idx}
-                                style={{ height: `${bVal || 6}%` }}
-                                className={`flex-1 rounded-sm transition-all duration-200 ${
-                                  bVal > 0 
-                                    ? "bg-[#3ecf8e] hover:bg-[#58e0a3]" 
-                                    : "bg-zinc-800/40"
-                                }`}
-                              />
-                            ))}
-                          </div>
-                          
-                          <div className="flex justify-between items-center text-[8.5px] text-zinc-600 font-mono mt-1 pt-1 border-t border-[#1e1e1e]">
-                            <span>9:15pm</span>
-                            <span>10:10pm</span>
-                          </div>
+                    {/* Right — Slider */}
+                    <div className="p-4 bg-[#111] border border-[#1e1e1e] rounded-xl flex flex-col gap-4">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[12px] font-medium text-zinc-300">Donation split</span>
+                        <span className="text-[13px] font-bold text-rose-400 bg-rose-500/8 border border-rose-500/15 px-2 py-0.5 rounded-md">{sliderValue}%</span>
+                      </div>
+                      <div className="space-y-1.5">
+                        <input
+                          type="range"
+                          min="10"
+                          max="100"
+                          step="5"
+                          value={sliderValue}
+                          onChange={handleSliderChange}
+                          style={{
+                            "--slider-pct": ((sliderValue - 10) / 90) * 100,
+                            background: `linear-gradient(to right, #f43f5e ${((sliderValue - 10) / 90) * 100}%, #3f3f46 ${((sliderValue - 10) / 90) * 100}%)`
+                          }}
+                          className="w-full h-[3px] rounded-full appearance-none cursor-pointer accent-rose-500 transition-none"
+                        />
+                        <div className="flex justify-between text-[9.5px] text-zinc-600 font-mono">
+                          <span>10%</span>
+                          <span>50%</span>
+                          <span>100%</span>
                         </div>
-                      ))}
+                      </div>
+                      <div className="flex items-start gap-2 p-3 bg-rose-500/4 border border-rose-500/8 rounded-lg">
+                        <AlertCircle size={12} className="text-rose-400 mt-0.5 shrink-0" />
+                        <p className="text-[11px] text-zinc-400 leading-relaxed">
+                          {subscription?.status === "active" ? (
+                            <>You are donating <span className="text-white font-semibold">£{((12.00 * sliderValue) / 100).toFixed(2)}</span> monthly to {activeCharity.name}.</>
+                          ) : (
+                            <>Upgrade to Pro to enable automated subscription cuts to your charity.</>  
+                          )}
+                        </p>
+                      </div>
                     </div>
                   </div>
-
-                </div>
-
-                {/* Right Column (Primary Database Map Node & Metrics) */}
-                <div className="space-y-6">
-                  
-                  {/* Database Health Card & Dotted Grid */}
-                  <div className="space-y-3">
-                    <h3 className="text-[11px] uppercase tracking-wider font-bold text-zinc-500">
-                      Primary Database Location
-                    </h3>
-
-                    {/* Dotted Graphic Panel */}
-                    <div 
-                      className="h-[224px] border border-[#222] rounded-xl flex items-center justify-center relative"
-                      style={{
-                        backgroundColor: "#111111",
-                        backgroundImage: "radial-gradient(#2e2e33 1px, transparent 1px)",
-                        backgroundSize: "16px 16px"
-                      }}
+                ) : (
+                  <div className="flex flex-col items-center gap-3 py-12 px-6 text-center">
+                    <div className="w-10 h-10 rounded-xl bg-rose-500/8 border border-rose-500/12 flex items-center justify-center">
+                      <Heart size={18} className="text-rose-400" />
+                    </div>
+                    <div>
+                      <p className="text-[13px] font-semibold text-white">No charity selected</p>
+                      <p className="text-[11.5px] text-zinc-500 mt-1 max-w-[260px] mx-auto">Choose a cause from our directory to begin directing your subscription contribution.</p>
+                    </div>
+                    <button
+                      onClick={() => setActiveTab("charities")}
+                      className="h-7 px-4 bg-[#3ecf8e] hover:bg-[#32b37a] text-black text-[11.5px] font-bold rounded-lg transition-all"
                     >
-                      {/* Grid Lines decorative overlay */}
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent pointer-events-none" />
-                      
-                      {/* Floating Database location node */}
-                      <div className="relative bg-[#141414] border border-[#3ecf8e]/30 shadow-2xl p-4 rounded-xl max-w-[280px] w-full text-left space-y-3 z-10 animate-pulse-slow">
-                        
-                        <div className="flex items-center gap-2.5 pb-2.5 border-b border-[#2e2e33]">
-                          <div className="w-7 h-7 rounded-lg bg-[#3ecf8e]/10 border border-[#3ecf8e]/20 flex items-center justify-center text-[#3ecf8e]">
-                            <Database size={14} />
-                          </div>
-                          <div>
-                            <h4 className="text-[12.5px] font-bold text-white">Primary Database</h4>
-                            <p className="text-[11px] text-zinc-400">Singapore (ap-southeast-1)</p>
-                          </div>
-                        </div>
+                      Browse directory
+                    </button>
+                  </div>
+                )}
+              </div>
 
-                        <div className="space-y-1.5 text-[11px] font-mono text-zinc-400">
-                          <div className="flex justify-between">
-                            <span className="text-zinc-500">Tier:</span>
-                            <span className="font-bold text-white">14g.nano</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-zinc-500">Resources:</span>
-                            <span className="text-[#3ecf8e] font-semibold">Healthy</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-zinc-500">Metrics:</span>
-                            <span>CPU 2% · Disk 14%</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-zinc-500">Active Conns:</span>
-                            <span>0 / 60</span>
-                          </div>
-                        </div>
-
-                        {/* Progress bars inside card */}
-                        <div className="h-1 bg-zinc-800 rounded-full overflow-hidden flex">
-                          <div className="bg-[#3ecf8e] h-full" style={{ width: "2%" }} />
-                          <div className="bg-[#5227FF] h-full" style={{ width: "14%" }} />
-                        </div>
-                      </div>
-
-                      {/* Glowing Radar Target */}
-                      <span className="absolute bottom-1/4 right-1/3 w-3 h-3 bg-[#3ecf8e] rounded-full border border-white">
-                        <span className="absolute -inset-2 bg-[#3ecf8e]/40 rounded-full animate-ping" />
-                      </span>
+              {/* ── Winnings Claims ── */}
+              {winners.length > 0 && (
+                <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl overflow-hidden">
+                  <div className="flex items-center gap-2.5 px-5 py-4 border-b border-[#1e1e1e]">
+                    <div className="w-6 h-6 rounded-md bg-emerald-500/10 border border-emerald-500/15 flex items-center justify-center">
+                      <Award size={12} className="text-emerald-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-[13px] font-semibold text-white">Winnings & Claims</h3>
+                      <p className="text-[11px] text-zinc-500">Upload proof to verify your prize claims</p>
                     </div>
                   </div>
-
-                </div>
-
-              </div>
-
-              {/* Advisor found no issues */}
-              <div className="space-y-3">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-[11px] uppercase tracking-wider font-bold text-zinc-500">
-                    Advisor found no issues
-                  </h3>
-                  <button className="text-[11px] text-zinc-400 hover:text-white bg-[#141414] border border-[#222] px-2.5 py-0.5 rounded cursor-pointer hover:bg-[#1a1a1f] transition-all">
-                    Ask Assistant
-                  </button>
-                </div>
-
-                <div className="bg-[#141414] border border-[#222] rounded-xl p-6 flex flex-col items-center justify-center text-center min-h-[90px]">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-[#3ecf8e] animate-ping" />
-                    <p className="text-[12px] font-bold text-zinc-400">No security or performance issues found</p>
+                  <div className="divide-y divide-[#1e1e1e]">
+                    {winners.map((w) => (
+                      <div key={w.id} className="px-5 py-4 flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+                        <div className="space-y-1.5">
+                          <p className="text-[12.5px] font-semibold text-white">Draw {w.draws?.month}/{w.draws?.year}</p>
+                          <p className="text-[11px] text-zinc-500 capitalize">{w.draws?.draw_type?.replace("_", " ")}</p>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`text-[9.5px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md border ${
+                              w.verification_status === "approved"
+                                ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                                : w.verification_status === "rejected"
+                                  ? "bg-red-500/10 border-red-500/20 text-red-400"
+                                  : "bg-amber-500/10 border-amber-500/20 text-amber-400"
+                            }`}>{w.verification_status}</span>
+                            <span className={`text-[9.5px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md border ${
+                              w.payment_status === "paid"
+                                ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                                : "bg-zinc-800 border-zinc-700/50 text-zinc-500"
+                            }`}>{w.payment_status}</span>
+                          </div>
+                        </div>
+                        <div className="shrink-0">
+                          {w.verification_status !== "approved" ? (
+                            <label className="inline-flex items-center gap-1.5 px-3 h-7 bg-transparent border border-[#272727] hover:border-[#333] rounded-lg text-[11px] font-medium text-zinc-400 hover:text-white cursor-pointer transition-all">
+                              <Upload size={10} />
+                              {w.proof_image_url ? "Re-upload" : "Upload proof"}
+                              <input type="file" accept="image/*" className="hidden" onChange={(e) => handleWinnerProofUpload(e, w.id)} />
+                            </label>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-400">
+                              <CheckCircle2 size={12} /> Verified
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              </div>
-
-              {/* Reports Section */}
-              <div className="space-y-3">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-[11px] uppercase tracking-wider font-bold text-zinc-500">
-                    Reports
-                  </h3>
-                  <button className="text-[11px] text-zinc-400 hover:text-white bg-[#141414] border border-[#222] px-2.5 py-0.5 rounded cursor-pointer hover:bg-[#1a1a1f] transition-all flex items-center gap-1">
-                    <Plus size={11} />
-                    Add block
-                  </button>
-                </div>
-
-                <div className="bg-[#141414] border border-dashed border-[#2e2e2e] rounded-xl p-8 flex flex-col items-center justify-center text-center">
-                  <p className="text-[12.5px] font-bold text-white">Build a custom report</p>
-                  <p className="text-[11.5px] text-zinc-500 max-w-[280px] mt-1 mb-4 leading-relaxed">
-                    Keep track of your most important metrics by creating customizable grids.
-                  </p>
-                  <button className="bg-[#242428] hover:bg-[#2d2d33] border border-[#2e2e33] text-zinc-200 text-[11.5px] font-bold px-3 py-1.5 rounded transition-all">
-                    Add your first block +
-                  </button>
-                </div>
-              </div>
+              )}
 
             </div>
           )}
 
           {/* ============================================================ */}
-          {/* TAB 2: TABLE EDITOR (Scores)                                 */}
+          {/* TAB 2: GOLF SCORECARD                                        */}
           {/* ============================================================ */}
           {activeTab === "scores" && (
-            <div className="max-w-[1200px] w-full mx-auto space-y-6 animate-fadeInUp flex flex-col flex-1 h-full">
-              
-              <div className="flex justify-between items-center border-b border-[#222] pb-5 shrink-0">
+            <div className="space-y-5 animate-fadeInUp">
+
+              {/* ── Header ── */}
+              <div className="flex items-start justify-between">
                 <div>
-                  <h1 className="text-[20px] font-bold text-white tracking-tight flex items-center gap-2">
-                    <Table size={18} className="text-[#3ecf8e]" />
-                    Table Editor: <span className="text-zinc-400 font-mono text-[16px] bg-[#111] px-2 py-0.5 rounded border border-[#222]">public.scores</span>
-                  </h1>
-                  <p className="text-[12.5px] text-zinc-500 mt-1">Log rounds, check Stableford scores, and manage your rolling 5-score limit.</p>
+                  <h1 className="text-[17px] font-semibold text-white tracking-tight">Golf Scorecard</h1>
+                  <p className="text-[12.5px] text-zinc-500 mt-0.5">Stableford format · rolling 5-score window · most recent first</p>
                 </div>
-                <button 
+                <button
+                  id="log-round-btn"
                   onClick={() => {
                     setAddErrorMessage("");
                     setAddDuplicateScoreId(null);
                     setScoreValue("");
-                    setScoreDate("2026-06-20");
+                    setScoreDate("");
                     setShowAddScoreModal(true);
                   }}
-                  className="bg-[#3ecf8e] text-black hover:bg-[#32b37a] text-[12px] font-bold h-8 px-3 rounded flex items-center gap-1.5 transition-all"
+                  className="h-8 px-3 bg-[#3ecf8e] hover:bg-[#32b37a] text-black text-[12px] font-bold rounded-lg flex items-center gap-1.5 transition-all"
                 >
                   <Plus size={13} strokeWidth={2.5} /> Log Round
                 </button>
               </div>
 
-              {/* Spread-sheet style table view */}
-              <div className="flex-grow bg-[#141414] border border-[#222] rounded-lg overflow-hidden flex flex-col shadow-2xl">
-                {/* Table Header Filter options */}
-                <div className="h-[40px] bg-[#111] border-b border-[#222] flex items-center px-4 justify-between text-[11.5px] text-zinc-400 shrink-0">
-                  <div className="flex items-center gap-4">
-                    <span className="font-semibold text-white">public.scores</span>
-                    <span className="text-zinc-600">|</span>
-                    <button className="hover:text-white">Filter</button>
-                    <button className="hover:text-white">Sort</button>
-                    <button className="hover:text-white">Columns</button>
+              {/* ── Score Stats Row ── */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[
+                  {
+                    label: "Rounds Logged",
+                    value: `${scores.length} / 5`,
+                    sub: scores.length === 5 ? "Rolling limit reached" : `${5 - scores.length} slots remaining`,
+                    accent: scores.length === 5 ? "text-amber-400" : "text-[#3ecf8e]"
+                  },
+                  {
+                    label: "Best Score",
+                    value: scores.length > 0 ? Math.max(...scores.map(s => s.score_value)) : "—",
+                    sub: "Highest Stableford pts",
+                    accent: "text-emerald-400"
+                  },
+                  {
+                    label: "Average Score",
+                    value: scores.length > 0 ? (scores.reduce((a, s) => a + s.score_value, 0) / scores.length).toFixed(1) : "—",
+                    sub: "Across logged rounds",
+                    accent: "text-indigo-400"
+                  },
+                  {
+                    label: "Latest Round",
+                    value: scores.length > 0 ? scores[0].score_value : "—",
+                    sub: scores.length > 0 ? new Date(scores[0].score_date + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "No rounds yet",
+                    accent: "text-white"
+                  }
+                ].map((stat, i) => (
+                  <div key={i} className="bg-[#161616] border border-[#1e1e1e] rounded-xl p-4 flex flex-col gap-1.5 hover:border-[#2a2a2a] transition-all">
+                    <span className="text-[10.5px] text-zinc-500 font-medium">{stat.label}</span>
+                    <p className={`text-[22px] font-bold leading-none ${stat.accent}`}>{stat.value}</p>
+                    <p className="text-[11px] text-zinc-600">{stat.sub}</p>
                   </div>
-                  <div>
-                    <span>{scores.length} / 5 rows</span>
-                  </div>
-                </div>
-
-                {/* Table Layout */}
-                <div className="overflow-x-auto overflow-y-auto max-h-[500px]">
-                  <table className="w-full border-collapse text-left text-[12.5px] font-mono">
-                    <thead>
-                      <tr className="border-b border-[#222] bg-[#161616] text-[11px] font-bold uppercase tracking-wider text-zinc-500">
-                        <th className="px-4 py-2 border-r border-[#222] w-[40px] text-center bg-[#111]">#</th>
-                        <th className="px-5 py-2.5 border-r border-[#222]">id [uuid]</th>
-                        <th className="px-5 py-2.5 border-r border-[#222]">stableford_score [int4]</th>
-                        <th className="px-5 py-2.5 border-r border-[#222]">score_date [date]</th>
-                        <th className="px-5 py-2.5 border-r border-[#222]">created_at [timestamptz]</th>
-                        <th className="px-5 py-2.5">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#222] text-zinc-300">
-                      {scores.length === 0 ? (
-                        <tr>
-                          <td colSpan={6} className="text-center py-12 text-zinc-500 italic font-sans text-[13px]">
-                            No golf rounds logged yet. Click &quot;Log Round&quot; above to add your first Stableford score (maximum 5 stored rows).
-                          </td>
-                        </tr>
-                      ) : (
-                        scores.map((s, index) => (
-                          <tr key={s.id} className="hover:bg-[#1e1e1e] transition-colors group">
-                            <td className="px-4 py-2 border-r border-[#222] text-center bg-[#111] text-zinc-600 font-sans">{index + 1}</td>
-                            <td className="px-5 py-2.5 border-r border-[#222] text-[#3ecf8e] truncate max-w-[120px]" title={s.id}>{s.id}</td>
-                            <td className="px-5 py-2.5 border-r border-[#222] text-white font-bold text-[14px]">{s.score_value}</td>
-                            <td className="px-5 py-2.5 border-r border-[#222] text-zinc-400 font-sans">{s.score_date}</td>
-                            <td className="px-5 py-2.5 border-r border-[#222] text-zinc-500 text-[11.5px] font-sans">{new Date(s.created_at).toLocaleString()}</td>
-                            <td className="px-5 py-2.5 flex items-center gap-2">
-                              <button
-                                onClick={() => openEditModal(s)}
-                                className="text-[11px] font-bold text-[#3ecf8e] hover:text-white bg-[#3ecf8e]/10 border border-[#3ecf8e]/20 px-2.5 py-1 rounded transition-all hover:bg-[#3ecf8e]/20"
-                              >
-                                Edit
-                              </button>
-                              <button
-                                onClick={() => handleDeleteScore(s.id)}
-                                className="text-[11px] font-bold text-red-400 hover:text-white bg-red-500/10 border border-red-500/20 px-2.5 py-1 rounded transition-all hover:bg-red-500/20"
-                              >
-                                Delete
-                              </button>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                ))}
               </div>
 
-              {/* Add Round modal popup */}
-              {showAddScoreModal && (
-                <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                  <div className="bg-[#141414] border border-[#2e2e2e] rounded-xl max-w-[400px] w-full p-6 space-y-4 animate-scaleUp">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="text-[16px] font-bold text-white">Log Golf Round</h3>
-                        <p className="text-[12px] text-zinc-500">Insert a new Stableford score row.</p>
-                      </div>
-                      <button 
-                        onClick={() => setShowAddScoreModal(false)}
-                        className="text-zinc-500 hover:text-white text-[20px] font-bold leading-none"
-                      >
-                        &times;
-                      </button>
+              {/* ── Rolling Limit Warning ── */}
+              {scores.length === 5 && (
+                <div className="flex items-start gap-2.5 px-4 py-3 bg-amber-500/5 border border-amber-500/10 rounded-xl">
+                  <AlertCircle size={14} className="text-amber-400 shrink-0 mt-0.5" />
+                  <p className="text-[12px] text-amber-400 leading-relaxed">
+                    <span className="font-semibold">Rolling limit active.</span> Submitting a new score will automatically delete your oldest round&nbsp;
+                    <span className="font-mono text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded">
+                      {scores[scores.length - 1]?.score_date}
+                    </span>{" "}
+                    ({scores[scores.length - 1]?.score_value} pts) to keep the window at 5 entries.
+                  </p>
+                </div>
+              )}
+
+              {/* ── Scorecard Table ── */}
+              <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl overflow-hidden">
+
+                {/* Table Header */}
+                <div className="grid grid-cols-[48px_1fr_1fr_1fr_auto] px-5 py-2.5 border-b border-[#1e1e1e] bg-[#111] text-[10.5px] font-semibold uppercase tracking-wider text-zinc-500">
+                  <span className="text-center">#</span>
+                  <span>Score</span>
+                  <span>Performance</span>
+                  <span>Date Played</span>
+                  <span>Actions</span>
+                </div>
+
+                {/* Table Body */}
+                {scores.length === 0 ? (
+                  <div className="flex flex-col items-center gap-4 py-16 px-6 text-center">
+                    <div className="w-12 h-12 rounded-xl bg-[#1e1e1e] border border-[#252525] flex items-center justify-center">
+                      <Table size={20} className="text-zinc-600" />
                     </div>
-                    
+                    <div>
+                      <p className="text-[13.5px] font-semibold text-white">No rounds logged yet</p>
+                      <p className="text-[12px] text-zinc-500 mt-1 max-w-[260px] mx-auto">
+                        Log your first Stableford score to start tracking performance and enter monthly prize draws.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setAddErrorMessage("");
+                        setAddDuplicateScoreId(null);
+                        setScoreValue("");
+                        setScoreDate("");
+                        setShowAddScoreModal(true);
+                      }}
+                      className="h-8 px-4 bg-[#3ecf8e] hover:bg-[#32b37a] text-black text-[12px] font-bold rounded-lg transition-all"
+                    >
+                      Log first round
+                    </button>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-[#1e1e1e]">
+                    {scores.map((s, index) => {
+                      const pts = s.score_value;
+                      const tier =
+                        pts >= 36 ? { label: "Excellent", color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" } :
+                        pts >= 28 ? { label: "Great", color: "text-indigo-400 bg-indigo-500/10 border-indigo-500/20" } :
+                        pts >= 18 ? { label: "Good", color: "text-amber-400 bg-amber-500/10 border-amber-500/20" } :
+                                    { label: "Below avg", color: "text-zinc-400 bg-zinc-800 border-zinc-700/50" };
+                      const isOldest = index === scores.length - 1 && scores.length === 5;
+
+                      return (
+                        <div
+                          key={s.id}
+                          id={`score-row-${s.id}`}
+                          className={`grid grid-cols-[48px_1fr_1fr_1fr_auto] items-center px-5 py-3.5 hover:bg-[#1a1a1a] transition-colors ${isOldest ? "border-l-2 border-amber-500/40" : ""}`}
+                        >
+                          <span className="text-[11px] text-zinc-600 font-mono text-center font-bold">{index + 1}</span>
+                          <div className="flex items-center gap-2.5">
+                            <div className={`w-9 h-9 rounded-full border flex items-center justify-center text-[14px] font-bold ${tier.color}`}>
+                              {pts}
+                            </div>
+                            <span className="text-[11px] text-zinc-500 font-mono">pts</span>
+                          </div>
+                          <span className={`text-[10.5px] font-semibold px-2 py-0.5 rounded-md border w-fit ${tier.color}`}>
+                            {tier.label}
+                          </span>
+                          <span className="text-[12.5px] text-zinc-400">
+                            {new Date(s.score_date + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}
+                            {isOldest && (
+                              <span className="ml-2 text-[9.5px] text-amber-500/80 font-semibold uppercase tracking-wider">oldest</span>
+                            )}
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => openEditModal(s)}
+                              className="h-7 px-2.5 text-[11px] font-medium text-zinc-400 hover:text-white border border-[#272727] hover:border-[#333] rounded-lg transition-all flex items-center gap-1"
+                            >
+                              <Edit size={11} /> Edit
+                            </button>
+                            <button
+                              onClick={() => handleDeleteScore(s.id)}
+                              className="h-7 px-2.5 text-[11px] font-medium text-red-400/70 hover:text-red-300 border border-red-500/10 hover:border-red-500/20 rounded-lg transition-all flex items-center gap-1"
+                            >
+                              <Trash2 size={11} /> Delete
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {scores.length > 0 && (
+                  <div className="px-5 py-2.5 border-t border-[#1e1e1e] bg-[#111] flex items-center justify-between text-[11px] text-zinc-600">
+                    <span>{scores.length} of 5 rounds stored · sorted newest first</span>
+                    <span className="font-mono">Rolling 5-score window</span>
+                  </div>
+                )}
+              </div>
+
+              {/* ── Add Round Modal ── */}
+              {showAddScoreModal && (
+                <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={(e) => e.target === e.currentTarget && setShowAddScoreModal(false)}>
+                  <div className="bg-[#161616] border border-[#252525] rounded-2xl max-w-[420px] w-full shadow-2xl animate-scaleUp overflow-hidden">
+                    <div className="flex items-center justify-between px-6 py-4 border-b border-[#1e1e1e]">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-7 h-7 rounded-lg bg-[#3ecf8e]/10 border border-[#3ecf8e]/15 flex items-center justify-center">
+                          <Plus size={14} className="text-[#3ecf8e]" />
+                        </div>
+                        <div>
+                          <h3 className="text-[13.5px] font-semibold text-white">Log Golf Round</h3>
+                          <p className="text-[11px] text-zinc-500">Stableford score · 1–45 range</p>
+                        </div>
+                      </div>
+                      <button onClick={() => setShowAddScoreModal(false)} className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-500 hover:text-white hover:bg-[#222] transition-all text-[18px] leading-none">×</button>
+                    </div>
                     {addErrorMessage && (
-                      <div className="p-3.5 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-[12.5px] leading-relaxed space-y-2">
-                        <p className="font-semibold">{addErrorMessage}</p>
-                        {addDuplicateScoreId && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const existing = scores.find(s => s.id === addDuplicateScoreId);
-                              if (existing) {
-                                setShowAddScoreModal(false);
-                                openEditModal(existing);
-                              }
-                            }}
-                            className="w-full py-1.5 bg-zinc-800 hover:bg-zinc-700 text-white rounded text-[11px] font-bold transition-all text-center"
-                          >
-                            Edit Existing Entry for this Date
-                          </button>
-                        )}
+                      <div className="mx-6 mt-4 p-3 bg-red-500/8 border border-red-500/15 rounded-xl">
+                        <div className="flex items-start gap-2">
+                          <XCircle size={13} className="text-red-400 shrink-0 mt-0.5" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[12px] text-red-300 font-medium leading-relaxed">{addErrorMessage}</p>
+                            {addDuplicateScoreId && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const existing = scores.find(s => s.id === addDuplicateScoreId);
+                                  if (existing) { setShowAddScoreModal(false); openEditModal(existing); }
+                                }}
+                                className="mt-2 w-full py-1.5 bg-[#1e1e1e] hover:bg-[#252525] border border-[#2e2e2e] text-[11.5px] text-zinc-200 font-medium rounded-lg transition-all text-center"
+                              >
+                                → Edit existing score for this date
+                              </button>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     )}
-
-                    <form onSubmit={handleAddScoreSubmit} className="space-y-4">
-                      <div className="space-y-1.5">
-                        <div className="flex justify-between items-center">
-                          <label className="text-[11.5px] font-medium text-zinc-400">Stableford Score</label>
-                          {scoreValue && (
-                            parseInt(scoreValue, 10) >= 1 && parseInt(scoreValue, 10) <= 45 
-                              ? <span className="text-emerald-400 text-[11px] font-medium">✓ Valid (1-45)</span> 
-                              : <span className="text-red-400 text-[11px] font-medium">✗ Must be 1 to 45</span>
+                    <form onSubmit={handleAddScoreSubmit} className="px-6 py-5 space-y-4">
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[12px] font-medium text-zinc-400">Stableford Points</label>
+                          {scoreValue !== "" && (
+                            parseInt(scoreValue, 10) >= 1 && parseInt(scoreValue, 10) <= 45
+                              ? <span className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1"><CheckCircle2 size={11} /> Valid</span>
+                              : <span className="text-[11px] text-red-400 font-semibold flex items-center gap-1"><XCircle size={11} /> Must be 1–45</span>
                           )}
                         </div>
                         <input
+                          id="add-score-value"
                           type="number"
                           required
                           min="1"
                           max="45"
-                          placeholder="Stableford score (e.g. 38)"
+                          placeholder="e.g. 36"
                           value={scoreValue}
-                          onChange={(e) => {
-                            setScoreValue(e.target.value);
-                            setAddErrorMessage("");
-                            setAddDuplicateScoreId(null);
-                          }}
-                          className="w-full h-9 px-3 bg-[#111] border border-[#2e2e2e] rounded text-[13px] text-white focus:outline-none focus:border-[#3ecf8e] font-sans"
+                          onChange={(e) => { setScoreValue(e.target.value); setAddErrorMessage(""); setAddDuplicateScoreId(null); }}
+                          className="w-full h-9 px-3 bg-[#111] border border-[#252525] focus:border-[#3ecf8e] rounded-lg text-[13px] text-white focus:outline-none transition-colors"
                         />
+                        <p className="text-[10.5px] text-zinc-600">Strictly between 1 and 45 (Stableford format)</p>
                       </div>
-
-                      <div className="space-y-1.5">
-                        <label className="text-[11.5px] font-medium text-zinc-400">Play Date</label>
+                      <div className="space-y-2">
+                        <label className="text-[12px] font-medium text-zinc-400 block">Date of Play</label>
                         <input
+                          id="add-score-date"
                           type="date"
                           required
                           value={scoreDate}
-                          onChange={(e) => {
-                            setScoreDate(e.target.value);
-                            setAddErrorMessage("");
-                            setAddDuplicateScoreId(null);
-                          }}
-                          className="w-full h-9 px-3 bg-[#111] border border-[#2e2e2e] rounded text-[13px] text-white focus:outline-none focus:border-[#3ecf8e] font-sans"
+                          onChange={(e) => { setScoreDate(e.target.value); setAddErrorMessage(""); setAddDuplicateScoreId(null); }}
+                          className="w-full h-9 px-3 bg-[#111] border border-[#252525] focus:border-[#3ecf8e] rounded-lg text-[13px] text-white focus:outline-none transition-colors"
                         />
                       </div>
-
-                      <div className="text-[11px] text-zinc-500 leading-relaxed bg-[#111] p-2.5 rounded border border-[#222]">
-                        <span className="font-bold text-zinc-400">Note:</span> CauseLoop self-trims to 5 scores max. If you log a 6th round, the oldest entry by date will be automatically removed.
-                      </div>
-
-                      <div className="flex gap-2.5 justify-end pt-2 text-[12.5px]">
-                        <button
-                          type="button"
-                          onClick={() => setShowAddScoreModal(false)}
-                          className="px-4 py-1.5 border border-[#2e2e2e] rounded text-zinc-400 hover:text-white"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="submit"
-                          className="px-4 py-1.5 bg-[#3ecf8e] text-black hover:bg-[#32b37a] font-bold rounded"
-                        >
-                          Insert Row
-                        </button>
+                      {scores.length >= 5 && (
+                        <div className="flex items-start gap-2 p-3 bg-amber-500/5 border border-amber-500/10 rounded-xl">
+                          <AlertCircle size={12} className="text-amber-400 shrink-0 mt-0.5" />
+                          <p className="text-[11px] text-amber-400 leading-relaxed">
+                            Your oldest round <span className="font-mono text-amber-300">({scores[scores.length - 1]?.score_date} · {scores[scores.length - 1]?.score_value} pts)</span> will be removed to make room.
+                          </p>
+                        </div>
+                      )}
+                      <div className="flex gap-2 pt-1">
+                        <button type="button" onClick={() => setShowAddScoreModal(false)} className="flex-1 h-9 border border-[#252525] hover:border-[#333] rounded-lg text-[12px] text-zinc-400 hover:text-white transition-all">Cancel</button>
+                        <button type="submit" className="flex-1 h-9 bg-[#3ecf8e] hover:bg-[#32b37a] text-black font-bold rounded-lg text-[12px] transition-all">Log Round</button>
                       </div>
                     </form>
                   </div>
                 </div>
               )}
 
-              {/* Edit Round modal popup */}
+              {/* ── Edit Round Modal ── */}
               {showEditScoreModal && (
-                <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                  <div className="bg-[#141414] border border-[#2e2e2e] rounded-xl max-w-[400px] w-full p-6 space-y-4 animate-scaleUp">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="text-[16px] font-bold text-white">Edit Golf Round</h3>
-                        <p className="text-[12px] text-zinc-500">Modify details for this entry (enforced user ownership).</p>
+                <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={(e) => e.target === e.currentTarget && setShowEditScoreModal(false)}>
+                  <div className="bg-[#161616] border border-[#252525] rounded-2xl max-w-[420px] w-full shadow-2xl animate-scaleUp overflow-hidden">
+                    <div className="flex items-center justify-between px-6 py-4 border-b border-[#1e1e1e]">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-7 h-7 rounded-lg bg-indigo-500/10 border border-indigo-500/15 flex items-center justify-center">
+                          <Edit size={13} className="text-indigo-400" />
+                        </div>
+                        <div>
+                          <h3 className="text-[13.5px] font-semibold text-white">Edit Golf Round</h3>
+                          <p className="text-[11px] text-zinc-500">Update score or play date</p>
+                        </div>
                       </div>
-                      <button 
-                        onClick={() => {
-                          setShowEditScoreModal(false);
-                          setEditingScore(null);
-                        }}
-                        className="text-zinc-500 hover:text-white text-[20px] font-bold leading-none"
-                      >
-                        &times;
-                      </button>
+                      <button onClick={() => { setShowEditScoreModal(false); setEditingScore(null); }} className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-500 hover:text-white hover:bg-[#222] transition-all text-[18px] leading-none">×</button>
                     </div>
-
                     {editErrorMessage && (
-                      <div className="p-3.5 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-[12.5px] leading-relaxed space-y-2">
-                        <p className="font-semibold">{editErrorMessage}</p>
-                        {editDuplicateScoreId && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const existing = scores.find(s => s.id === editDuplicateScoreId);
-                              if (existing) {
-                                setShowEditScoreModal(false);
-                                openEditModal(existing);
-                              }
-                            }}
-                            className="w-full py-1.5 bg-zinc-800 hover:bg-zinc-700 text-white rounded text-[11px] font-bold transition-all text-center"
-                          >
-                            Edit Existing Entry for this Date
-                          </button>
-                        )}
+                      <div className="mx-6 mt-4 p-3 bg-red-500/8 border border-red-500/15 rounded-xl">
+                        <div className="flex items-start gap-2">
+                          <XCircle size={13} className="text-red-400 shrink-0 mt-0.5" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[12px] text-red-300 font-medium leading-relaxed">{editErrorMessage}</p>
+                            {editDuplicateScoreId && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const existing = scores.find(s => s.id === editDuplicateScoreId);
+                                  if (existing) { setShowEditScoreModal(false); openEditModal(existing); }
+                                }}
+                                className="mt-2 w-full py-1.5 bg-[#1e1e1e] hover:bg-[#252525] border border-[#2e2e2e] text-[11.5px] text-zinc-200 font-medium rounded-lg transition-all text-center"
+                              >
+                                → Switch to editing that score instead
+                              </button>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     )}
-
-                    <form onSubmit={handleEditScoreSubmit} className="space-y-4">
-                      <div className="space-y-1.5">
-                        <div className="flex justify-between items-center">
-                          <label className="text-[11.5px] font-medium text-zinc-400">Stableford Score</label>
-                          {editScoreValue && (
-                            parseInt(editScoreValue, 10) >= 1 && parseInt(editScoreValue, 10) <= 45 
-                              ? <span className="text-emerald-400 text-[11px] font-medium">✓ Valid (1-45)</span> 
-                              : <span className="text-red-400 text-[11px] font-medium">✗ Must be 1 to 45</span>
+                    <form onSubmit={handleEditScoreSubmit} className="px-6 py-5 space-y-4">
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[12px] font-medium text-zinc-400">Stableford Points</label>
+                          {editScoreValue !== "" && (
+                            parseInt(editScoreValue, 10) >= 1 && parseInt(editScoreValue, 10) <= 45
+                              ? <span className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1"><CheckCircle2 size={11} /> Valid</span>
+                              : <span className="text-[11px] text-red-400 font-semibold flex items-center gap-1"><XCircle size={11} /> Must be 1–45</span>
                           )}
                         </div>
                         <input
+                          id="edit-score-value"
                           type="number"
                           required
                           min="1"
                           max="45"
-                          placeholder="Stableford score (e.g. 38)"
+                          placeholder="e.g. 36"
                           value={editScoreValue}
-                          onChange={(e) => {
-                            setEditScoreValue(e.target.value);
-                            setEditErrorMessage("");
-                            setEditDuplicateScoreId(null);
-                          }}
-                          className="w-full h-9 px-3 bg-[#111] border border-[#2e2e2e] rounded text-[13px] text-white focus:outline-none focus:border-[#3ecf8e] font-sans"
+                          onChange={(e) => { setEditScoreValue(e.target.value); setEditErrorMessage(""); setEditDuplicateScoreId(null); }}
+                          className="w-full h-9 px-3 bg-[#111] border border-[#252525] focus:border-[#3ecf8e] rounded-lg text-[13px] text-white focus:outline-none transition-colors"
                         />
                       </div>
-
-                      <div className="space-y-1.5">
-                        <label className="text-[11.5px] font-medium text-zinc-400">Play Date</label>
+                      <div className="space-y-2">
+                        <label className="text-[12px] font-medium text-zinc-400 block">Date of Play</label>
                         <input
+                          id="edit-score-date"
                           type="date"
                           required
                           value={editScoreDate}
-                          onChange={(e) => {
-                            setEditScoreDate(e.target.value);
-                            setEditErrorMessage("");
-                            setEditDuplicateScoreId(null);
-                          }}
-                          className="w-full h-9 px-3 bg-[#111] border border-[#2e2e2e] rounded text-[13px] text-white focus:outline-none focus:border-[#3ecf8e] font-sans"
+                          onChange={(e) => { setEditScoreDate(e.target.value); setEditErrorMessage(""); setEditDuplicateScoreId(null); }}
+                          className="w-full h-9 px-3 bg-[#111] border border-[#252525] focus:border-[#3ecf8e] rounded-lg text-[13px] text-white focus:outline-none transition-colors"
                         />
                       </div>
-
-                      <div className="flex gap-2.5 justify-end pt-2 text-[12.5px]">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowEditScoreModal(false);
-                            setEditingScore(null);
-                          }}
-                          className="px-4 py-1.5 border border-[#2e2e2e] rounded text-zinc-400 hover:text-white"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="submit"
-                          className="px-4 py-1.5 bg-[#3ecf8e] text-black hover:bg-[#32b37a] font-bold rounded"
-                        >
-                          Save Changes
-                        </button>
+                      <div className="flex gap-2 pt-1">
+                        <button type="button" onClick={() => { setShowEditScoreModal(false); setEditingScore(null); }} className="flex-1 h-9 border border-[#252525] hover:border-[#333] rounded-lg text-[12px] text-zinc-400 hover:text-white transition-all">Cancel</button>
+                        <button type="submit" className="flex-1 h-9 bg-[#3ecf8e] hover:bg-[#32b37a] text-black font-bold rounded-lg text-[12px] transition-all">Save Changes</button>
                       </div>
                     </form>
                   </div>
@@ -1175,500 +1688,380 @@ export default function DashboardPage() {
           )}
 
           {/* ============================================================ */}
-          {/* TAB 3: SQL EDITOR (Draws)                                    */}
-          {/* ============================================================ */}
-          {activeTab === "draws" && (
-            <div className="max-w-[1200px] w-full mx-auto space-y-6 animate-fadeInUp flex flex-col flex-1 h-full">
-              
-              <div className="flex justify-between items-center border-b border-[#222] pb-5 shrink-0">
-                <div>
-                  <h1 className="text-[20px] font-bold text-white tracking-tight flex items-center gap-2">
-                    <Terminal size={18} className="text-[#3ecf8e]" />
-                    SQL Editor: Prize Drawing Queries
-                  </h1>
-                  <p className="text-[12.5px] text-zinc-500 mt-1">Review active drawings, raffle entries, and rollovers using simulated raw queries.</p>
-                </div>
-              </div>
 
-              {/* SQL Workspace Layout */}
-              <div className="grid md:grid-cols-4 gap-4 flex-grow border border-[#222] rounded-lg overflow-hidden bg-[#141414] min-h-[380px] shadow-2xl">
-                
-                {/* Left query templates */}
-                <div className="bg-[#111] border-r border-[#222] p-4 space-y-4">
-                  <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-extrabold block">Saved Queries</span>
-                  
-                  <div className="space-y-1.5">
-                    <button
-                      onClick={() => { setSelectedQuery("select_draws"); setQueryResult(null); }}
-                      className={`w-full text-left px-3 py-2 rounded text-[12px] font-mono transition-all truncate block ${
-                        selectedQuery === "select_draws"
-                          ? "bg-[#1d2c25] text-[#3ecf8e] border-l-2 border-[#3ecf8e]"
-                          : "text-zinc-400 hover:text-white hover:bg-[#1a1a1f]"
-                      }`}
-                    >
-                      SELECT * FROM draws;
-                    </button>
-                    <button
-                      onClick={() => { setSelectedQuery("select_entries"); setQueryResult(null); }}
-                      className={`w-full text-left px-3 py-2 rounded text-[12px] font-mono transition-all truncate block ${
-                        selectedQuery === "select_entries"
-                          ? "bg-[#1d2c25] text-[#3ecf8e] border-l-2 border-[#3ecf8e]"
-                          : "text-zinc-400 hover:text-white hover:bg-[#1a1a1f]"
-                      }`}
-                    >
-                      SELECT entries_by_user;
-                    </button>
-                  </div>
-                </div>
-
-                {/* Right Console editor */}
-                <div className="md:col-span-3 flex flex-col p-5 space-y-4">
-                  
-                  {/* Console Header */}
-                  <div className="flex justify-between items-center border-b border-[#2e2e33] pb-3.5">
-                    <div className="text-[12px] font-mono text-zinc-400">
-                      Query Console <span className="text-zinc-600">/</span> {selectedQuery === "select_draws" ? "active_draws.sql" : "user_draw_statistics.sql"}
-                    </div>
-                    <button
-                      onClick={handleRunQuery}
-                      disabled={queryRunning}
-                      className="bg-[#3ecf8e] text-black hover:bg-[#32b37a] text-[11.5px] font-bold h-7 px-3 rounded flex items-center gap-1.5 transition-all disabled:opacity-50"
-                    >
-                      <Play size={10} fill="currentColor" />
-                      {queryRunning ? "Executing..." : "Run Query"}
-                    </button>
-                  </div>
-
-                  {/* SQL Syntax Highlighting Box */}
-                  <div className="bg-[#111] border border-[#2e2e2e] rounded-lg p-4 font-mono text-[13px] text-[#3ecf8e] flex-grow select-text min-h-[120px]">
-                    {selectedQuery === "select_draws" ? (
-                      <div>
-                        <span className="text-zinc-500">-- Fetch all active and simulated draws</span>
-                        <br />
-                        <span className="text-pink-500">SELECT</span> * <span className="text-pink-500">FROM</span> draws
-                        <br />
-                        <span className="text-pink-500">ORDER BY</span> year <span className="text-pink-500">DESC</span>, month <span className="text-pink-500">DESC</span>;
-                      </div>
-                    ) : (
-                      <div>
-                        <span className="text-zinc-500">-- Count draw entries grouped by user ID</span>
-                        <br />
-                        <span className="text-pink-500">SELECT</span> user_id, count(id) <span className="text-pink-500">as</span> total_entries, max(created_at) <span className="text-pink-500">as</span> last_played
-                        <br />
-                        <span className="text-pink-500">FROM</span> draw_entries
-                        <br />
-                        <span className="text-pink-500">GROUP BY</span> user_id
-                        <br />
-                        <span className="text-pink-500">LIMIT</span> <span className="text-blue-400">3</span>;
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Results Pane */}
-                  <div className="h-[180px] bg-[#111] border border-[#2e2e2e] rounded-lg p-3 overflow-y-auto flex flex-col font-mono text-[11.5px]">
-                    <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-extrabold pb-2 border-b border-[#222] block shrink-0">
-                      Query Results
-                    </span>
-                    
-                    {queryRunning ? (
-                      <div className="flex-grow flex items-center justify-center text-zinc-500">
-                        <div className="w-4 h-4 rounded-full border border-[#3ecf8e] border-t-transparent animate-spin mr-2" />
-                        Executing query plan...
-                      </div>
-                    ) : queryResult ? (
-                      <table className="w-full text-left mt-2">
-                        <thead>
-                          <tr className="text-zinc-500 uppercase text-[10px] tracking-wider border-b border-[#222]">
-                            {Object.keys(queryResult[0]).map((k) => (
-                              <th key={k} className="py-1.5 px-2">{k}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody className="text-zinc-300 divide-y divide-[#222]">
-                          {queryResult.map((row, idx) => (
-                            <tr key={idx} className="hover:bg-zinc-900/50">
-                              {Object.values(row).map((v, i) => (
-                                <td key={i} className="py-1.5 px-2">{v.toString()}</td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    ) : (
-                      <div className="flex-grow flex items-center justify-center text-zinc-600 italic">
-                        Click &quot;Run Query&quot; to fetch relational database results
-                      </div>
-                    )}
-                  </div>
-
-                </div>
-
-              </div>
-
-            </div>
-          )}
-
-          {/* ============================================================ */}
-          {/* TAB 4: DATABASE EXPLORER (Charities)                         */}
+          {/* TAB 3: CHARITIES DIRECTORY                                   */}
           {/* ============================================================ */}
           {activeTab === "charities" && (
-            <div className="max-w-[1200px] w-full mx-auto space-y-6 animate-fadeInUp flex flex-col flex-1 h-full">
-              
-              <div className="flex justify-between items-center border-b border-[#222] pb-5 shrink-0">
-                <div>
-                  <h1 className="text-[20px] font-bold text-white tracking-tight flex items-center gap-2">
-                    <Database size={18} className="text-[#3ecf8e]" />
-                    Database Explorer: Schema tables
-                  </h1>
-                  <p className="text-[12.5px] text-zinc-500 mt-1">Explore relational schema, foreign key triggers, and rows inside public.charities.</p>
-                </div>
-              </div>
-
-              {/* Schema layout */}
-              <div className="grid md:grid-cols-4 gap-4 flex-grow border border-[#222] rounded-lg overflow-hidden bg-[#141414] min-h-[380px] shadow-2xl">
-                
-                {/* Left schema selection */}
-                <div className="bg-[#111] border-r border-[#222] p-4 space-y-4">
-                  <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-extrabold block">Tables</span>
-                  
-                  <div className="space-y-1">
-                    {[
-                      { name: "charities", count: "4 rows" },
-                      { name: "profiles", count: "1 row" },
-                      { name: "winners", count: "0 rows" },
-                      { name: "subscriptions", count: "1 row" },
-                      { name: "draw_entries", count: "3 rows" }
-                    ].map((table) => (
-                      <button
-                        key={table.name}
-                        onClick={() => setSelectedSchemaTable(table.name)}
-                        className={`w-full flex justify-between items-center px-3 py-2 rounded text-[12.5px] transition-all font-medium ${
-                          selectedSchemaTable === table.name
-                            ? "bg-[#1d2c25] text-[#3ecf8e]"
-                            : "text-zinc-400 hover:text-white hover:bg-[#1a1a1f]"
-                        }`}
-                      >
-                        <span>{table.name}</span>
-                        <span className="text-[10px] text-zinc-500 font-mono">{table.count}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Right Explorer detail */}
-                <div className="md:col-span-3 p-5 flex flex-col space-y-5 overflow-y-auto">
-                  
-                  {/* Schema Columns list */}
-                  <div className="space-y-2">
-                    <h3 className="text-[13px] font-bold text-white font-mono uppercase tracking-wide">
-                      Columns of public.{selectedSchemaTable}
-                    </h3>
-                    
-                    <div className="bg-[#111] border border-[#2e2e2e] rounded-lg p-3 text-[12.5px] font-mono space-y-1.5 text-zinc-400">
-                      {selectedSchemaTable === "charities" ? (
-                        <>
-                          <div className="flex justify-between border-b border-[#222] pb-1"><span className="text-white">id</span> <span className="text-[#3ecf8e]">uuid PRIMARY KEY</span></div>
-                          <div className="flex justify-between border-b border-[#222] pb-1"><span className="text-white">name</span> <span className="text-[#3ecf8e]">text NOT NULL</span></div>
-                          <div className="flex justify-between border-b border-[#222] pb-1"><span className="text-white">description</span> <span className="text-[#3ecf8e]">text</span></div>
-                          <div className="flex justify-between border-b border-[#222] pb-1"><span className="text-white">is_featured</span> <span className="text-[#3ecf8e]">boolean DEFAULT false</span></div>
-                          <div className="flex justify-between"><span className="text-white">created_at</span> <span className="text-[#3ecf8e]">timestamp with time zone</span></div>
-                        </>
-                      ) : selectedSchemaTable === "profiles" ? (
-                        <>
-                          <div className="flex justify-between border-b border-[#222] pb-1"><span className="text-white">id</span> <span className="text-[#3ecf8e]">uuid PRIMARY KEY (FK auth.users)</span></div>
-                          <div className="flex justify-between border-b border-[#222] pb-1"><span className="text-white">role</span> <span className="text-[#3ecf8e]">user_role DEFAULT &apos;visitor&apos;</span></div>
-                          <div className="flex justify-between border-b border-[#222] pb-1"><span className="text-white">full_name</span> <span className="text-[#3ecf8e]">text</span></div>
-                          <div className="flex justify-between"><span className="text-white">charity_contribution_percentage</span> <span className="text-[#3ecf8e]">numeric DEFAULT 10.00</span></div>
-                        </>
-                      ) : (
-                        <div className="text-zinc-500 italic text-center py-2">Schema view details loaded successfully</div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Schema table contents */}
-                  {selectedSchemaTable === "charities" && (
-                    <div className="space-y-2">
-                      <h3 className="text-[13px] font-bold text-white font-mono uppercase tracking-wide">
-                        Table rows
-                      </h3>
-                      
-                      <div className="grid sm:grid-cols-2 gap-4">
-                        {[
-                          { name: "Golf for Good", cat: "Youth Sports", desc: "Providing golf kits and coaching to underprivileged children.", raised: "£12,400" },
-                          { name: "British Red Cross", cat: "Humanitarian", desc: "Providing emergency relief support during global crises.", raised: "£8,200" },
-                          { name: "Ocean Cleanup", cat: "Environment", desc: "Developing advanced systems to clean global ocean plastic.", raised: "£6,500" },
-                          { name: "Mental Health UK", cat: "Wellbeing Support", desc: "Delivering crucial advisory services and mental health support.", raised: "£9,100" }
-                        ].map((charity, i) => (
-                          <div key={i} className="bg-[#111] border border-[#2e2e2e] rounded-lg p-4 flex flex-col justify-between min-h-[130px]">
-                            <div>
-                              <h4 className="text-[13px] font-bold text-white flex items-center gap-1.5">
-                                <Heart size={12} className="text-rose-500 fill-rose-500" />
-                                {charity.name}
-                              </h4>
-                              <p className="text-[11.5px] text-zinc-500 mt-1 leading-relaxed">{charity.desc}</p>
-                            </div>
-                            <div className="flex justify-between items-center text-[11px] pt-2.5 border-t border-[#222] mt-3">
-                              <span className="text-zinc-600">Total Contributions:</span>
-                              <span className="font-bold text-[#3ecf8e]">{charity.raised}</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {selectedSchemaTable !== "charities" && (
-                    <div className="border border-dashed border-[#222] rounded-lg p-8 flex items-center justify-center text-zinc-500 text-[12px] italic">
-                      Rows are active and managed via Supabase auth triggers.
-                    </div>
-                  )}
-
-                </div>
-
-              </div>
-
-            </div>
-          )}
-
-          {/* ============================================================ */}
-          {/* TAB 5: STORAGE BROWSER (Pricing)                             */}
-          {/* ============================================================ */}
-          {activeTab === "pricing" && (
-            <div className="max-w-[1200px] w-full mx-auto space-y-6 animate-fadeInUp flex flex-col flex-1 h-full">
-              
-              <div className="flex justify-between items-center border-b border-[#222] pb-5 shrink-0">
-                <div>
-                  <h1 className="text-[20px] font-bold text-white tracking-tight flex items-center gap-2">
-                    <FolderOpen size={18} className="text-[#3ecf8e]" />
-                    Storage Browser: Buckets
-                  </h1>
-                  <p className="text-[12.5px] text-zinc-500 mt-1">Manage static subscription plan payloads and config files in bucket pricing-tiers.</p>
-                </div>
-              </div>
-
-              {/* Storage Workspace */}
-              <div className="grid md:grid-cols-4 gap-4 flex-grow border border-[#222] rounded-lg overflow-hidden bg-[#141414] min-h-[380px] shadow-2xl">
-                
-                {/* Left Buckets list */}
-                <div className="bg-[#111] border-r border-[#222] p-4 space-y-4">
-                  <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-extrabold block">Storage Buckets</span>
-                  
-                  <div className="space-y-1">
-                    {[
-                      { name: "pricing-tiers", size: "2 files" },
-                      { name: "user-avatars", size: "0 files" },
-                      { name: "proof-images", size: "0 files" }
-                    ].map((bucket) => (
-                      <button
-                        key={bucket.name}
-                        className="w-full flex justify-between items-center px-3 py-2 rounded bg-[#1d2c25] text-[#3ecf8e] text-[12.5px] transition-all font-medium"
-                      >
-                        <span>{bucket.name}</span>
-                        <span className="text-[10.5px] text-zinc-500 font-mono">{bucket.size}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Right Folder payload details */}
-                <div className="md:col-span-3 p-5 flex flex-col space-y-4">
-                  
-                  <div className="flex justify-between items-center border-b border-[#222] pb-3 shrink-0">
-                    <span className="text-[12.5px] font-mono text-zinc-400">pricing-tiers / *</span>
-                  </div>
-
-                  {/* List files in bucket */}
-                  <div className="grid sm:grid-cols-2 gap-4 flex-grow">
-                    
-                    {/* File 1: free-visitor.json */}
-                    <div 
-                      onClick={() => setSelectedBucketFile("free")}
-                      className={`border rounded-lg p-5 flex flex-col justify-between min-h-[180px] cursor-pointer transition-all ${
-                        selectedBucketFile === "free" 
-                          ? "bg-[#111] border-[#3ecf8e] shadow-[0_0_20px_rgba(62,207,142,0.05)]" 
-                          : "bg-[#111] border-[#222] hover:border-zinc-700"
-                      }`}
-                    >
-                      <div>
-                        <div className="flex justify-between items-start">
-                          <span className="text-[10px] bg-zinc-900 border border-[#2e2e2e] text-zinc-400 px-2 py-0.5 rounded font-mono">JSON</span>
-                          <span className="text-[28px] font-black text-white leading-none">£0</span>
-                        </div>
-                        <h4 className="text-[14.5px] font-bold text-white mt-3.5">free-visitor.json</h4>
-                        <p className="text-[12px] text-zinc-500 mt-1 leading-normal">
-                          Read public updates, follow raffle summaries, and view global handicaps.
-                        </p>
-                      </div>
-                      
-                      <div className="text-[10.5px] text-zinc-500 border-t border-zinc-900 pt-2.5 mt-4">
-                        Size: 1.2 KB | Updated: 2026-06-20
-                      </div>
-                    </div>
-
-                    {/* File 2: pro-subscriber.json */}
-                    <div 
-                      onClick={() => setSelectedBucketFile("pro")}
-                      className={`border rounded-lg p-5 flex flex-col justify-between min-h-[180px] cursor-pointer transition-all ${
-                        selectedBucketFile === "pro" 
-                          ? "bg-[#111] border-[#3ecf8e] shadow-[0_0_20px_rgba(62,207,142,0.05)]" 
-                          : "bg-[#111] border-[#222] hover:border-zinc-700"
-                      }`}
-                    >
-                      <div>
-                        <div className="flex justify-between items-start">
-                          <span className="text-[10px] bg-zinc-900 border border-[#2e2e2e] text-[#3ecf8e] px-2 py-0.5 rounded font-mono">JSON</span>
-                          <span className="text-[28px] font-black text-white leading-none">£12</span>
-                        </div>
-                        <h4 className="text-[14.5px] font-bold text-white mt-3.5">pro-subscriber.json</h4>
-                        <p className="text-[12px] text-zinc-500 mt-1 leading-normal">
-                          Unlimited score index logging, monthly prize drawings, and 10%+ charity donations.
-                        </p>
-                      </div>
-
-                      <div className="text-[10.5px] text-[#3ecf8e] font-semibold border-t border-zinc-900 pt-2.5 mt-4 flex justify-between">
-                        <span>Size: 1.8 KB | Updated: 2026-06-20</span>
-                        <span>[ACTIVE]</span>
-                      </div>
-                    </div>
-
-                  </div>
-
-                  {/* JSON payload preview */}
-                  {selectedBucketFile && (
-                    <div className="bg-[#111] border border-[#2e2e2e] rounded-lg p-4 font-mono text-[11.5px] text-zinc-400 select-text shrink-0">
-                      <span className="text-zinc-600">{"// File Metadata view: "}{selectedBucketFile}-tier.json</span>
-                      <pre className="mt-1.5 text-zinc-300">
-                        {selectedBucketFile === "free" ? (
-                          JSON.stringify({
-                            tier: "free-visitor",
-                            price: 0,
-                            features: ["read-blogs", "view-leaderboards", "draw-summaries"],
-                            active_connections: "0/1"
-                          }, null, 2)
-                        ) : (
-                          JSON.stringify({
-                            tier: "pro-subscriber",
-                            price: 12,
-                            features: ["unlimited-logging", "handicap-calculations", "monthly-draws", "charity-donations"],
-                            charity_cut: "10%+",
-                            active_connections: "1/1"
-                          }, null, 2)
-                        )}
-                      </pre>
-                    </div>
-                  )}
-
-                </div>
-
-              </div>
-
-            </div>
-          )}
-
-          {/* ============================================================ */}
-          {/* TAB 6: PROJECT SETTINGS                                      */}
-          {/* ============================================================ */}
-          {activeTab === "settings" && (
-            <div className="max-w-[1200px] w-full mx-auto space-y-6 animate-fadeInUp">
+            <div className="space-y-6 animate-fadeInUp">
               
               <div className="border-b border-[#222] pb-5">
                 <h1 className="text-[20px] font-bold text-white tracking-tight flex items-center gap-2">
-                  <Settings size={18} className="text-[#3ecf8e]" />
-                  Project Settings
+                  <Heart size={18} className="text-rose-500 fill-rose-500" />
+                  Charity Partners Directory
                 </h1>
-                <p className="text-[12.5px] text-zinc-500 mt-1">Configure project metadata, security variables, and API keys.</p>
+                <p className="text-[12.5px] text-zinc-500 mt-1">Browse, search, and support active charities. Select a cause to receive your subscription donation.</p>
               </div>
 
-              {/* Form Settings */}
-              <div className="bg-[#141414] border border-[#222] rounded-xl p-6 max-w-[600px] space-y-6 shadow-2xl">
-                
-                <div className="space-y-4">
-                  <h3 className="text-[14px] font-bold text-white border-b border-[#222] pb-2">General Metadata</h3>
-                  
-                  {saveSuccess && (
-                    <div className="bg-[#1d2c25] border border-[#3ecf8e]/30 text-[#3ecf8e] text-[12px] p-2.5 rounded font-medium">
-                      Project settings updated successfully.
-                    </div>
-                  )}
+              {/* Search Bar / Filter Tags */}
+              <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
+                <div className="relative w-full sm:max-w-md">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+                  <input
+                    type="text"
+                    placeholder="Search charities by name or cause description..."
+                    value={charitySearch}
+                    onChange={(e) => setCharitySearch(e.target.value)}
+                    className="w-full h-9 pl-9 pr-4 bg-[#141414] border border-[#222] rounded text-[12.5px] text-white focus:outline-none focus:border-[#3ecf8e]"
+                  />
+                </div>
 
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {["All", "Featured", "Environment", "Humanitarian", "Wellbeing"].map((tag) => (
+                    <button
+                      key={tag}
+                      onClick={() => setSelectedCharityCategory(tag)}
+                      className={`px-3 py-1 rounded text-[11px] font-bold transition-all border ${
+                        selectedCharityCategory === tag
+                          ? "bg-rose-500/10 border-rose-500/25 text-rose-400"
+                          : "bg-[#141414] border-[#222] text-zinc-400 hover:text-white"
+                      }`}
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Charities Grid */}
+              <div className="grid md:grid-cols-2 gap-4">
+                {charities
+                  .filter((c) => {
+                    const matchesSearch = c.name.toLowerCase().includes(charitySearch.toLowerCase()) || 
+                                          c.description.toLowerCase().includes(charitySearch.toLowerCase());
+                    const matchesCategory = selectedCharityCategory === "All" ||
+                                            (selectedCharityCategory === "Featured" && c.is_featured) ||
+                                            (selectedCharityCategory === "Environment" && c.name.toLowerCase().includes("green")) ||
+                                            (selectedCharityCategory === "Humanitarian" && c.name.toLowerCase().includes("red")) ||
+                                            (selectedCharityCategory === "Wellbeing" && c.name.toLowerCase().includes("mental"));
+                    return matchesSearch && matchesCategory;
+                  })
+                  .map((c) => {
+                    const isSupported = profile?.charity_id === c.id;
+
+                    return (
+                      <div key={c.id} className={`bg-[#141414] border rounded-lg p-5 flex flex-col justify-between hover:border-zinc-800 transition-colors shadow-lg relative overflow-hidden group ${
+                        isSupported ? "border-rose-500/25" : "border-[#222]"
+                      }`}>
+                        
+                        <div className="space-y-4">
+                          <div className="flex items-start gap-4">
+                            {c.image_urls && c.image_urls.length > 0 ? (
+                              <img 
+                                src={c.image_urls[0]} 
+                                alt={c.name} 
+                                className="w-12 h-12 rounded object-cover border border-[#222] shrink-0"
+                              />
+                            ) : (
+                              <div className="w-12 h-12 rounded bg-zinc-950 border border-zinc-900 flex items-center justify-center text-rose-500 shrink-0">
+                                <Heart size={20} />
+                              </div>
+                            )}
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-1.5">
+                                <h3 className="text-[14px] font-bold text-white leading-tight">{c.name}</h3>
+                                {c.is_featured && (
+                                  <span className="text-[8px] bg-rose-500/10 text-rose-400 border border-rose-500/20 px-1.5 py-0.1 rounded font-extrabold uppercase tracking-wide">
+                                    Spotlight
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[10px] text-zinc-500 font-mono">ID: {c.id.substring(0, 8)}...</span>
+                            </div>
+                          </div>
+
+                          <p className="text-[12px] text-zinc-400 leading-relaxed font-medium">{c.description}</p>
+                          
+                          {/* Upcoming Events */}
+                          {c.upcoming_events && c.upcoming_events.length > 0 && (
+                            <div className="bg-zinc-950/40 p-3 rounded border border-[#222] space-y-1.5">
+                              <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest block">Upcoming Events</span>
+                              {c.upcoming_events.map((ev, i) => (
+                                <div key={i} className="flex justify-between text-[11px] items-center">
+                                  <span className="text-zinc-300 font-semibold truncate max-w-[180px]">{ev.name}</span>
+                                  <span className="text-zinc-500 font-mono">{ev.date}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* CTA Row */}
+                        <div className="pt-4 border-t border-[#222] mt-4 flex items-center justify-between">
+                          <span className="text-[11px] text-zinc-500">
+                            Raised: <span className="font-bold text-emerald-400">£1,420</span>
+                          </span>
+                          
+                          {isSupported ? (
+                            <button 
+                              disabled
+                              className="h-7.5 px-3 bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[11px] font-bold rounded cursor-default flex items-center gap-1"
+                            >
+                              <Check size={11} strokeWidth={3} /> Selected Partner
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleSupportCharity(c.id, c.name)}
+                              className="h-7.5 px-3 bg-[#3ecf8e] text-black hover:bg-[#32b37a] text-[11px] font-bold rounded transition-all"
+                            >
+                              Support Cause
+                            </button>
+                          )}
+                        </div>
+
+                      </div>
+                    );
+                  })}
+              </div>
+
+            </div>
+          )}
+
+          {/* ============================================================ */}
+          {/* TAB 4: PRIZE DRAWS CENTER                                    */}
+          {/* ============================================================ */}
+          {activeTab === "draws" && (
+            <div className="space-y-6 animate-fadeInUp">
+              
+              <div className="border-b border-[#222] pb-5">
+                <h1 className="text-[20px] font-bold text-white tracking-tight flex items-center gap-2">
+                  <Trophy size={18} className="text-[#3ecf8e]" />
+                  Prize Draws Center
+                </h1>
+                <p className="text-[12.5px] text-zinc-500 mt-1">Review pool shares, ticket entries, and past drawing winning numbers.</p>
+              </div>
+
+              {/* Pool split detail banner */}
+              <div className="grid md:grid-cols-3 gap-4">
+                {[
+                  { tier: "5-Number Match (Jackpot)", share: "40%", rollover: "Yes", desc: "Split equally among all 5-match winners. Jackpot rolls forward if unclaimed." },
+                  { tier: "4-Number Match", share: "35%", rollover: "No", desc: "Split equally among all 4-match winners. Resets monthly." },
+                  { tier: "3-Number Match", share: "25%", rollover: "No", desc: "Split equally among all 3-match winners. Resets monthly." }
+                ].map((tier, idx) => (
+                  <div key={idx} className="bg-[#141414] border border-[#222] rounded-lg p-5 space-y-2">
+                    <span className="text-[9px] text-zinc-500 uppercase tracking-widest font-extrabold">{tier.tier}</span>
+                    <div className="flex justify-between items-baseline pt-1">
+                      <span className="text-[20px] font-black text-white">{tier.share}</span>
+                      <span className="text-[9px] bg-zinc-950 border border-zinc-900 px-2 py-0.5 rounded text-zinc-400 font-mono">Rollover: {tier.rollover}</span>
+                    </div>
+                    <p className="text-[11px] text-zinc-400 leading-relaxed pt-1.5">{tier.desc}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Ticket entries card */}
+              <div className="bg-[#141414] border border-[#222] rounded-lg p-5 flex flex-col md:flex-row justify-between items-center gap-4">
+                <div className="space-y-1">
+                  <span className="text-[9px] text-zinc-500 uppercase tracking-widest font-bold block">My Entry Card</span>
+                  <h3 className="text-[15px] font-extrabold text-white">Played Numbers for upcoming Draws</h3>
+                  <p className="text-[12px] text-zinc-400">Your ticket numbers are derived from your latest 5 logged score cards.</p>
+                </div>
+                
+                <div className="flex items-center gap-2">
+                  {scores.length === 0 ? (
+                    <div className="text-[12px] text-zinc-500 italic">No rounds logged. Log scores to create tickets!</div>
+                  ) : (
+                    scores.map((s) => (
+                      <span 
+                        key={s.id} 
+                        className="w-9 h-9 rounded-full border border-zinc-800 bg-zinc-950 flex items-center justify-center font-bold text-[13.5px] text-[#3ecf8e] shadow-inner font-mono"
+                      >
+                        {s.score_value}
+                      </span>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Past Draws List */}
+              <div className="space-y-4">
+                <h3 className="text-[13px] font-bold text-white uppercase tracking-wider">Past Drawing Results</h3>
+                
+                <div className="space-y-3">
+                  {draws.map((d) => (
+                    <div key={d.id} className="bg-[#141414] border border-[#222] rounded-lg p-5 flex flex-col sm:flex-row justify-between items-center gap-4 hover:border-zinc-800 transition-colors shadow-lg">
+                      
+                      <div className="space-y-1.5 text-center sm:text-left">
+                        <span className="text-[9px] bg-[#3ecf8e]/10 text-[#3ecf8e] border border-[#3ecf8e]/20 px-2 py-0.5 rounded font-extrabold uppercase tracking-wide">
+                          {d.month}/{d.year} DRAW
+                        </span>
+                        <h4 className="text-[14px] font-bold text-white mt-1">Pool Amount: £{d.prize_pool_amount.toLocaleString()}</h4>
+                        <div className="text-[11px] text-zinc-500 flex items-center gap-2 flex-wrap">
+                          <span>Jackpot Rollover: £{d.jackpot_rollover_amount.toLocaleString()}</span>
+                          <span>•</span>
+                          <span className="capitalize font-mono">Engine: {d.logic_type}</span>
+                        </div>
+                      </div>
+
+                      {/* Winning Balls */}
+                      <div className="flex items-center gap-1.5">
+                        {d.winning_numbers.map((n, i) => (
+                          <span 
+                            key={i} 
+                            className="w-8 h-8 rounded-full bg-gradient-to-br from-[#3ecf8e] to-emerald-700 text-black font-extrabold text-[12.5px] flex items-center justify-center shadow-md border border-emerald-500/20 font-mono"
+                          >
+                            {n}
+                          </span>
+                        ))}
+                      </div>
+
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+            </div>
+          )}
+
+          {/* ============================================================ */}
+          {/* TAB 5: PROFILE & BILLING SETTINGS                            */}
+          {/* ============================================================ */}
+          {activeTab === "settings" && (
+            <div className="space-y-6 animate-fadeInUp max-w-[600px]">
+              
+              <div className="border-b border-[#222] pb-5">
+                <h1 className="text-[20px] font-bold text-white tracking-tight flex items-center gap-2">
+                  <Settings size={18} className="text-zinc-400" />
+                  Project Settings & Billing
+                </h1>
+                <p className="text-[12.5px] text-zinc-500 mt-1">Configure workspace details, settings, and billing integrations.</p>
+              </div>
+
+              {/* Form Settings Card */}
+              <div className="bg-[#141414] border border-[#222] rounded-xl p-6 space-y-6 shadow-xl">
+                
+                <form onSubmit={handleSaveSettings} className="space-y-4 text-[13px]">
+                  <h3 className="text-[14px] font-bold text-white border-b border-[#222] pb-2">Profile Metadata</h3>
+                  
                   <div className="space-y-2">
-                    <label className="text-[11.5px] font-medium text-zinc-400">Project Name</label>
+                    <label className="text-[11.5px] font-medium text-zinc-400">Full Name</label>
                     <input
                       type="text"
-                      value={projectName}
-                      onChange={(e) => setProjectName(e.target.value)}
-                      className="w-full h-9 px-3 bg-[#111] border border-[#2e2e2e] rounded text-[13px] text-white focus:outline-none focus:border-[#3ecf8e]"
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      className="w-full h-9 px-3 bg-zinc-950 border border-zinc-800 rounded text-[13px] text-white focus:outline-none focus:border-[#3ecf8e]"
+                      required
                     />
                   </div>
 
                   <div className="space-y-2">
-                    <label className="text-[11.5px] font-medium text-zinc-400">Database Role</label>
+                    <label className="text-[11.5px] font-medium text-zinc-400">Email Address (Registered)</label>
                     <input
                       type="text"
                       disabled
-                      value={profile?.role || "subscriber"}
-                      className="w-full h-9 px-3 bg-[#1c1c1f] border border-[#2e2e2e] rounded text-[13px] text-zinc-500 cursor-not-allowed capitalize"
+                      value={user?.email || ""}
+                      className="w-full h-9 px-3 bg-zinc-900 border border-zinc-800 rounded text-[13px] text-zinc-500 cursor-not-allowed"
                     />
                   </div>
-                </div>
 
-                {/* Subscription Billing */}
-                <div className="space-y-4 pt-4 border-t border-[#222]">
+                  <div className="space-y-2">
+                    <label className="text-[11.5px] font-medium text-zinc-400">Supported Charity Partner</label>
+                    <select
+                      value={editCharityId}
+                      onChange={(e) => setEditCharityId(e.target.value)}
+                      className="w-full h-9 px-3 bg-zinc-950 border border-zinc-800 rounded text-[13px] text-white focus:outline-none focus:border-[#3ecf8e] cursor-pointer"
+                    >
+                      <option value="">No Charity Selected</option>
+                      {charities.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name} {c.is_featured ? "★" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center text-[11.5px] font-medium text-zinc-400">
+                      <span>Donation Share Slice</span>
+                      <span className="text-[#3ecf8e] font-bold">{editContributionPercentage}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="10"
+                      max="100"
+                      step="5"
+                      value={editContributionPercentage}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        setEditContributionPercentage(val >= 10 ? val : 10);
+                      }}
+                      className="w-full accent-[#3ecf8e] bg-zinc-950 rounded h-1.5 cursor-pointer border border-zinc-800"
+                    />
+                    <span className="text-[10px] text-zinc-500 block leading-normal">
+                      Percentage of monthly CauseLoop fee allocated directly to the selected charity (Min 10%).
+                    </span>
+                  </div>
+
+                  <div className="flex justify-end pt-2">
+                    <button
+                      type="submit"
+                      disabled={savingSettings}
+                      className="px-4 py-1.5 bg-[#3ecf8e] text-black hover:bg-[#32b37a] font-bold rounded text-[12px] transition-all disabled:opacity-50"
+                    >
+                      {savingSettings ? "Saving Settings..." : "Save Settings"}
+                    </button>
+                  </div>
+                </form>
+
+                {/* Stripe Billing Portal Integration */}
+                <div className="space-y-4 pt-6 border-t border-[#222]">
                   <h3 className="text-[14px] font-bold text-white pb-1 flex items-center gap-1.5">
-                    <CreditCard size={13} className="text-indigo-400" />
-                    Subscription Billing
+                    <CreditCard size={13} className="text-[#3ecf8e]" />
+                    Gateway Subscriptions
                   </h3>
                   
                   {subscription?.status === "active" ? (
                     <div className="space-y-3">
-                      <div className="bg-[#1c2c25] border border-[#3ecf8e]/20 rounded-lg p-4 flex items-center justify-between">
+                      <div className="bg-emerald-950/20 border border-emerald-500/20 rounded p-4 flex items-center justify-between">
                         <div>
-                          <div className="flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full bg-[#3ecf8e] animate-pulse" />
-                            <h4 className="text-[13.5px] font-bold text-white capitalize">Active Pro Plan ({subscription?.plan_type})</h4>
-                          </div>
-                          <p className="text-[11.5px] text-zinc-400 mt-1">
-                            Your billing cycle renews on <span className="font-semibold text-zinc-200">{subscription?.current_period_end ? new Date(subscription.current_period_end).toLocaleDateString("en-GB", { day: 'numeric', month: 'short', year: 'numeric' }) : "N/A"}</span>.
+                          <h4 className="text-[13px] font-bold text-white capitalize">Active Pro Membership ({subscription?.plan_type})</h4>
+                          <p className="text-[11.5px] text-zinc-400 mt-1 leading-normal">
+                            Processed via Stripe cards. Cycle renews on <span className="font-semibold text-zinc-200">{new Date(subscription.current_period_end).toLocaleDateString("en-GB", { day: 'numeric', month: 'short', year: 'numeric' })}</span>.
                           </p>
                         </div>
-                        <span className="text-[10px] bg-[#3ecf8e]/10 text-[#3ecf8e] border border-[#3ecf8e]/20 px-2 py-0.5 rounded font-extrabold uppercase tracking-wider">
+                        <span className="text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded font-extrabold uppercase tracking-wider">
                           Active
                         </span>
                       </div>
-                      <p className="text-[12.5px] text-zinc-400">
-                        Manage your subscription plan, view invoices, or cancel/update billing via the Stripe Customer Portal.
+                      <p className="text-[12px] text-zinc-500 leading-normal">
+                        Access invoices, edit cards, or cancel subscription updates via Stripe Customer Portal.
                       </p>
                       <a
                         href="/api/portal"
-                        className="inline-flex items-center justify-center gap-1.5 bg-[#222] hover:bg-[#2d2d33] border border-[#2e2e2e] text-zinc-200 text-[12px] font-bold px-4 h-9 rounded transition-all"
+                        className="inline-flex items-center justify-center gap-1.5 bg-zinc-900 hover:bg-zinc-800 border border-[#2e2e33] text-zinc-200 hover:text-white text-[11.5px] font-bold px-4 h-8.5 rounded transition-all"
                       >
-                        Manage Billing & Invoices
+                        Manage Billing & Cards
                         <ExternalLink size={11} />
                       </a>
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      <div className="bg-indigo-950/20 border border-indigo-500/25 rounded-lg p-4 flex items-center justify-between">
+                      <div className="bg-amber-950/20 border border-amber-500/20 rounded p-4 flex items-center justify-between">
                         <div>
-                          <div className="flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
-                            <h4 className="text-[13.5px] font-bold text-white">Free Visitor Tier</h4>
-                          </div>
-                          <p className="text-[11.5px] text-zinc-400 mt-1">
-                            Upgrade to Pro to unlock WHS handicap indexes, monthly drawing tickets, and active charity donations.
+                          <h4 className="text-[13px] font-bold text-white">Free Visitor Tier</h4>
+                          <p className="text-[11.5px] text-zinc-400 mt-1 leading-normal">
+                            Activate monthly or yearly golf-draw packages to unlock the scorecard and contribution slider features.
                           </p>
                         </div>
-                        <span className="text-[10px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded font-extrabold uppercase tracking-wider">
+                        <span className="text-[9px] bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded font-extrabold uppercase tracking-wider">
                           Inactive
                         </span>
                       </div>
-                      <p className="text-[12.5px] text-zinc-400">
-                        Select a monthly or discounted yearly pricing plan to upgrade your CauseLoop workspace.
+                      <p className="text-[12px] text-zinc-500 leading-normal">
+                        Select a payment plan to connect Stripe processing.
                       </p>
                       <Link
                         href="/subscribe"
-                        className="inline-flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[12px] font-bold px-4 h-9 rounded transition-all shadow-[0_4px_15px_rgba(79,70,229,0.2)]"
+                        className="inline-flex items-center justify-center gap-1.5 bg-[#3ecf8e] text-black hover:bg-[#32b37a] text-[11.5px] font-bold px-4 h-8.5 rounded transition-all shadow-md"
                       >
                         Upgrade to Pro
                         <Sparkles size={11} />
@@ -1677,123 +2070,544 @@ export default function DashboardPage() {
                   )}
                 </div>
 
-                {/* API Credentials */}
-                <div className="space-y-4 pt-4 border-t border-[#222]">
-                  <h3 className="text-[14px] font-bold text-white pb-1 flex items-center gap-1.5">
-                    <Lock size={13} className="text-amber-500" />
-                    API Credentials
-                  </h3>
-                  
-                  {/* Anon Key */}
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-center">
-                      <label className="text-[11.5px] font-medium text-zinc-400">Project API anon Key (public)</label>
-                      <button 
-                        onClick={() => setShowAnonKey(!showAnonKey)}
-                        className="text-[11px] text-zinc-500 hover:text-white"
-                      >
-                        {showAnonKey ? "Hide" : "Show"}
-                      </button>
-                    </div>
-                    <div className="flex gap-2">
-                      <input
-                        type={showAnonKey ? "text" : "password"}
-                        readOnly
-                        value="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndrY2hhbmZ5YWpkaXZtdXVtbXNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MTg3MDc2MDAsImV4cCI6MjAzNDI4MzYwMH0"
-                        className="w-full h-9 px-3 bg-[#111] border border-[#2e2e2e] rounded text-[11px] text-zinc-400 font-mono select-all focus:outline-none"
-                      />
-                      <button
-                        onClick={() => handleCopyLink("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndrY2hhbmZ5YWpkaXZtdXVtbXNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MTg3MDc2MDAsImV4cCI6MjAzNDI4MzYwMH0")}
-                        className="bg-[#1e1e1e] hover:bg-[#252528] border border-[#2e2e2e] text-white px-3 rounded flex items-center justify-center shrink-0 transition-colors"
-                      >
-                        <Copy size={12} />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Service Role Key */}
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-center">
-                      <label className="text-[11.5px] font-medium text-zinc-400">Project service_role Key (secret)</label>
-                      <button 
-                        onClick={() => setShowServiceKey(!showServiceKey)}
-                        className="text-[11px] text-zinc-500 hover:text-white"
-                      >
-                        {showServiceKey ? "Hide" : "Show"}
-                      </button>
-                    </div>
-                    <div className="flex gap-2">
-                      <input
-                        type={showServiceKey ? "text" : "password"}
-                        readOnly
-                        value="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndrY2hhbmZ5YWpkaXZtdXVtbXNiIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTcxODcwNzYwMCwiZXhwIjoyMDM0MjgzNjAwfQ"
-                        className="w-full h-9 px-3 bg-[#111] border border-[#2e2e2e] rounded text-[11px] text-[#ff6b6b] font-mono select-all focus:outline-none"
-                      />
-                      <button
-                        onClick={() => handleCopyLink("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndrY2hhbmZ5YWpkaXZtdXVtbXNiIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTcxODcwNzYwMCwiZXhwIjoyMDM0MjgzNjAwfQ")}
-                        className="bg-[#1e1e1e] hover:bg-[#252528] border border-[#2e2e2e] text-white px-3 rounded flex items-center justify-center shrink-0 transition-colors"
-                      >
-                        <Copy size={12} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex justify-end gap-2.5 pt-4 border-t border-[#222] text-[12.5px]">
-                  <button
-                    onClick={() => {
-                      setSaveSuccess(true);
-                      setTimeout(() => setSaveSuccess(false), 2000);
-                    }}
-                    className="bg-[#3ecf8e] hover:bg-[#32b37a] text-black font-bold h-8 px-4 rounded transition-all"
-                  >
-                    Save Changes
-                  </button>
-                </div>
-
               </div>
 
             </div>
           )}
 
+          {/* ============================================================ */}
+          {/* TAB 6: ADMIN SUITE PANEL                                     */}
+          {/* ============================================================ */}
+          {activeTab === "admin" && userRole === "admin" && (
+            <div className="space-y-6 animate-fadeInUp">
+              
+              <div className="border-b border-[#222] pb-5 shrink-0">
+                <h1 className="text-[20px] font-bold text-white tracking-tight flex items-center gap-2">
+                  <ShieldCheck size={20} className="text-emerald-400" />
+                  Admin Control Panel
+                </h1>
+                <p className="text-[12.5px] text-zinc-500 mt-1">Configure draw logic, manage charities, view users, and check winner claim proofs.</p>
+              </div>
+
+              {/* Admin Workspaces split */}
+              <div className="grid md:grid-cols-4 gap-4 items-start">
+                
+                {/* Admin Submenu list */}
+                <div className="bg-[#141414] border border-[#222] rounded-lg p-4 space-y-1">
+                  {[
+                    { id: "users", label: "User Profiles", icon: Users },
+                    { id: "charities", label: "Charities List", icon: Heart },
+                    { id: "draws", label: "Simulate Drawings", icon: Trophy },
+                    { id: "claims", label: "Winner Claims", icon: Award },
+                    { id: "reports", label: "Reports & Analytics", icon: TrendingUp }
+                  ].map((sub) => {
+                    const SubIcon = sub.icon;
+                    return (
+                      <button
+                        key={sub.id}
+                        onClick={() => { setAdminTab(sub.id); setSimulationResults(null); }}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded text-[12px] font-bold transition-all ${
+                          adminTab === sub.id
+                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                            : "text-zinc-400 hover:text-white hover:bg-zinc-900"
+                        }`}
+                      >
+                        <SubIcon size={13} />
+                        <span>{sub.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Admin Content Details */}
+                <div className="md:col-span-3 space-y-4">
+                  
+                  {/* ADMIN SUB-TAB A: USER MANAGEMENT */}
+                  {adminTab === "users" && (
+                    <div className="bg-[#141414] border border-[#222] rounded-lg p-6 space-y-4 shadow-xl">
+                      <h3 className="text-[13px] font-bold text-white border-b border-[#222] pb-2">Registered Accounts List</h3>
+                      
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-[12px] font-mono">
+                          <thead>
+                            <tr className="border-b border-[#222] text-zinc-500 font-extrabold uppercase text-[10px] tracking-wider bg-zinc-950/20">
+                              <th className="py-2.5 px-3">Email / Name</th>
+                              <th className="py-2.5 px-3">Role</th>
+                              <th className="py-2.5 px-3">Subscription</th>
+                              <th className="py-2.5 px-3 text-right">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[#222] text-zinc-300 font-medium">
+                            {adminProfiles.map((p) => {
+                              const subRow = p.subscriptions?.[0];
+                              return (
+                                <tr key={p.id} className="hover:bg-zinc-950/20">
+                                  <td className="py-3 px-3">
+                                    <p className="text-white font-sans font-bold">{p.full_name || "Unnamed Golfer"}</p>
+                                    <p className="text-[11px] text-zinc-500 font-mono">{p.id}</p>
+                                  </td>
+                                  <td className="py-3 px-3 capitalize font-sans">{p.role}</td>
+                                  <td className="py-3 px-3">
+                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded capitalize font-sans ${
+                                      subRow?.status === "active" ? "bg-emerald-500/10 text-emerald-400" : "bg-zinc-800 text-zinc-400"
+                                    }`}>
+                                      {subRow?.status || "inactive"}
+                                    </span>
+                                  </td>
+                                  <td className="py-3 px-3 text-right space-x-2 font-sans">
+                                    <button
+                                      onClick={() => {
+                                        setSelectedUserScores(p);
+                                        setShowUserScoresModal(true);
+                                      }}
+                                      className="text-[11px] font-bold text-emerald-400 hover:text-white bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded"
+                                    >
+                                      Scores
+                                    </button>
+                                    <button
+                                      onClick={() => handleAdminChangeRole(p.id, p.role)}
+                                      className="text-[11px] font-bold text-zinc-400 hover:text-white bg-zinc-900 border border-[#2e2e33] px-2 py-1 rounded"
+                                    >
+                                      Role
+                                    </button>
+                                    <button
+                                      onClick={() => handleAdminToggleSubscription(p.id, subRow?.status)}
+                                      className="text-[11px] font-bold text-[#8644FF] hover:text-white bg-[#8644FF]/10 border border-[#8644FF]/20 px-2 py-1 rounded"
+                                    >
+                                      Subscription
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ADMIN SUB-TAB B: CHARITIES CONFIG */}
+                  {adminTab === "charities" && (
+                    <div className="bg-[#141414] border border-[#222] rounded-lg p-6 space-y-4 shadow-xl">
+                      <div className="flex justify-between items-center border-b border-[#222] pb-2">
+                        <h3 className="text-[13px] font-bold text-white">Charity Partners List</h3>
+                        <button
+                          onClick={() => setShowAddCharityModal(true)}
+                          className="h-7 px-3 bg-emerald-500 hover:bg-emerald-400 text-black text-[11px] font-bold rounded flex items-center gap-1 transition-all"
+                        >
+                          <Plus size={11} strokeWidth={3} /> Add Partner
+                        </button>
+                      </div>
+
+                      <div className="divide-y divide-[#222] border border-[#222] rounded-lg overflow-hidden">
+                        {adminCharities.map((c) => (
+                          <div key={c.id} className="p-4 flex justify-between items-center gap-4 hover:bg-zinc-950/20">
+                            <div>
+                              <h4 className="text-[13px] font-bold text-white">{c.name}</h4>
+                              <p className="text-[11.5px] text-zinc-500 truncate max-w-[380px] mt-0.5">{c.description}</p>
+                            </div>
+                            <button
+                              onClick={() => handleAdminDeleteCharity(c.id)}
+                              className="p-1.5 text-zinc-500 hover:text-red-400 bg-zinc-900 hover:bg-red-500/5 border border-zinc-800 rounded transition-colors"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ADMIN SUB-TAB C: PRIZE DRAWS ENGINE */}
+                  {adminTab === "draws" && (
+                    <div className="bg-[#141414] border border-[#222] rounded-lg p-6 space-y-6 shadow-xl">
+                      <h3 className="text-[13px] font-bold text-white border-b border-[#222] pb-2">Configure & Execute Draw Simulations</h3>
+
+                      <div className="grid sm:grid-cols-3 gap-4 items-end bg-zinc-950/30 p-4 border border-[#222] rounded-lg">
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] text-zinc-400 font-medium">Draw cadence (Month)</label>
+                          <select 
+                            value={drawMonth} 
+                            onChange={(e) => setDrawMonth(e.target.value)}
+                            className="w-full h-8 px-2 bg-zinc-950 border border-zinc-800 rounded text-[12px] text-white focus:outline-none"
+                          >
+                            {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <option key={m} value={m}>{m}</option>)}
+                          </select>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] text-zinc-400 font-medium">Cadence (Year)</label>
+                          <input 
+                            type="number" 
+                            value={drawYear} 
+                            onChange={(e) => setDrawYear(e.target.value)}
+                            className="w-full h-8 px-2 bg-zinc-950 border border-zinc-800 rounded text-[12px] text-white focus:outline-none"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] text-zinc-400 font-medium">Algorithm Weighted Logic</label>
+                          <select 
+                            value={drawLogic} 
+                            onChange={(e) => setDrawLogic(e.target.value)}
+                            className="w-full h-8 px-2 bg-zinc-950 border border-zinc-800 rounded text-[12px] text-white focus:outline-none"
+                          >
+                            <option value="random">Random Generation</option>
+                            <option value="algorithmic">Algorithmic Weighted Frequency</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="flex justify-end">
+                        <button
+                          onClick={handleRunSimulation}
+                          disabled={drawSimulating}
+                          className="h-8 px-4 bg-emerald-500 hover:bg-emerald-400 text-black text-[11.5px] font-extrabold rounded flex items-center gap-1.5 disabled:opacity-50 shadow-md"
+                        >
+                          <Play size={11} fill="currentColor" />
+                          {drawSimulating ? "Simulating draw..." : "Execute Simulation"}
+                        </button>
+                      </div>
+
+                      {/* Simulation Results Display */}
+                      {simulationResults && (
+                        <div className="space-y-4 border border-emerald-500/20 bg-emerald-500/5 rounded-lg p-5 animate-scaleUp">
+                          <div className="flex justify-between items-start border-b border-emerald-500/10 pb-3">
+                            <div>
+                              <h4 className="text-[13px] font-bold text-white">Simulated Winning Numbers</h4>
+                              <p className="text-[11px] text-zinc-400 mt-0.5 font-mono">Month: {simulationResults.month}/{simulationResults.year} | Engine: {simulationResults.logic_type}</p>
+                            </div>
+                            <div className="flex items-center gap-1.5 font-mono">
+                              {simulationResults.winning_numbers.map((n, i) => (
+                                <span key={i} className="w-8 h-8 rounded-full bg-[#3ecf8e] text-black font-extrabold text-[12px] flex items-center justify-center">
+                                  {n}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4 text-[11px] font-mono text-zinc-400">
+                            <div>Subscribers Checked: <span className="text-white font-bold">{simulationResults.total_subscribers}</span></div>
+                            <div>Accumulated Pool: <span className="text-[#3ecf8e] font-bold">£{simulationResults.prize_pool_amount.toFixed(2)}</span></div>
+                          </div>
+
+                          {simulationResults.winners.length > 0 ? (
+                            <div className="space-y-2 pt-2">
+                              <h5 className="text-[12px] font-bold text-white">Matching Winners</h5>
+                              <div className="divide-y divide-zinc-900 border border-zinc-900 rounded-lg overflow-hidden bg-zinc-950/20 text-[11.5px] font-mono">
+                                {simulationResults.winners.map((w, idx) => (
+                                  <div key={idx} className="p-2.5 flex justify-between">
+                                    <span>{w.full_name} (Matches: {w.match_count})</span>
+                                    <span className="text-[#3ecf8e]">£{w.prize_amount.toFixed(2)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="text-[11.5px] text-zinc-500 italic">No users matched 3+ numbers. Jackpot rolls over.</p>
+                          )}
+
+                          <div className="flex justify-end pt-2.5">
+                            <button
+                              onClick={handlePublishDraw}
+                              className="h-8 px-4 bg-[#3ecf8e] text-black hover:bg-[#32b37a] text-[11.5px] font-bold rounded"
+                            >
+                              Publish Draw Results
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ADMIN SUB-TAB D: WINNER REVIEW CLAIMS */}
+                  {adminTab === "claims" && (
+                    <div className="bg-[#141414] border border-[#222] rounded-lg p-6 space-y-4 shadow-xl">
+                      <h3 className="text-[13px] font-bold text-white border-b border-[#222] pb-2">Review Submitted Claims</h3>
+
+                      <div className="divide-y divide-[#222] border border-[#222] rounded-lg overflow-hidden">
+                        {adminWinners.length === 0 ? (
+                          <div className="text-center py-10 text-zinc-500 italic text-[12px]">No winner claims submitted.</div>
+                        ) : (
+                          adminWinners.map((w) => (
+                            <div key={w.id} className="p-4 flex flex-col md:flex-row justify-between items-start gap-4">
+                              <div className="space-y-1.5">
+                                <p className="text-[13px] font-bold text-white">{w.profiles?.full_name || w.profiles?.email}</p>
+                                <p className="text-[11px] text-zinc-500 font-mono">Draw ID: {w.draw_id}</p>
+                                <div className="flex gap-2">
+                                  <span className={`text-[9.5px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
+                                    w.verification_status === "approved" ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"
+                                  }`}>
+                                    Claim: {w.verification_status}
+                                  </span>
+                                  <span className={`text-[9.5px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
+                                    w.payment_status === "paid" ? "bg-emerald-500/10 text-emerald-400" : "bg-zinc-800 text-zinc-400"
+                                  }`}>
+                                    Payout: {w.payment_status}
+                                  </span>
+                                </div>
+
+                                {w.proof_image_url ? (
+                                  <div className="pt-2">
+                                    <p className="text-[9px] text-zinc-500 uppercase tracking-widest font-black pb-1.5">Score Proof Screenshot:</p>
+                                    <img 
+                                      src={w.proof_image_url} 
+                                      alt="Proof" 
+                                      className="max-w-[240px] rounded border border-[#222] shadow-lg object-contain max-h-[140px]"
+                                    />
+                                  </div>
+                                ) : (
+                                  <p className="text-[11px] text-zinc-500 italic pt-1">No screenshot proof uploaded.</p>
+                                )}
+                              </div>
+
+                              <div className="flex flex-col gap-2 shrink-0">
+                                {w.verification_status !== "approved" && (
+                                  <>
+                                    <button
+                                      onClick={() => handleAdminWinnerVerify(w.id, "approved")}
+                                      className="h-7 px-3 bg-[#3ecf8e] text-black hover:bg-[#32b37a] text-[11px] font-bold rounded"
+                                    >
+                                      Approve
+                                    </button>
+                                    <button
+                                      onClick={() => handleAdminWinnerVerify(w.id, "rejected")}
+                                      className="h-7 px-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 text-[11px] font-bold rounded"
+                                    >
+                                      Reject
+                                    </button>
+                                  </>
+                                )}
+
+                                {w.verification_status === "approved" && w.payment_status !== "paid" && (
+                                  <button
+                                    onClick={() => handleAdminWinnerPay(w.id)}
+                                    className="h-7 px-3 bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold rounded"
+                                  >
+                                    Mark Paid
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ADMIN SUB-TAB E: REPORTS & ANALYTICS */}
+                  {adminTab === "reports" && (
+                    <div className="space-y-4">
+                      <div className="grid sm:grid-cols-3 gap-4">
+                        {[
+                          { label: "Total Registered Users", val: adminProfiles.length, icon: Users, color: "text-indigo-400" },
+                          { label: "Total Accumulated Pools", val: `£${(adminDraws.reduce((acc, d) => acc + d.prize_pool_amount, 0.00)).toFixed(2)}`, icon: DollarSign, color: "text-emerald-400" },
+                          { label: "Total Charity Funding", val: `£${(adminProfiles.reduce((acc, p) => acc + (p.subscriptions?.some(s => s.status === 'active') ? 1.20 : 0.00), 0.00)).toFixed(2)}`, icon: Heart, color: "text-rose-500" }
+                        ].map((stat, i) => {
+                          const StatIcon = stat.icon;
+                          return (
+                            <div key={i} className="bg-[#141414] border border-[#222] rounded-lg p-4 flex items-center justify-between shadow-lg">
+                              <div className="space-y-1">
+                                <span className="text-[9px] text-zinc-500 uppercase tracking-widest font-black">{stat.label}</span>
+                                <p className="text-[18px] font-black text-white font-mono">{stat.val}</p>
+                              </div>
+                              <div className={`w-8 h-8 rounded bg-zinc-950 flex items-center justify-center border border-zinc-900 ${stat.color}`}>
+                                <StatIcon size={14} />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div className="bg-[#141414] border border-[#222] rounded-lg p-5 shadow-xl space-y-4">
+                        <h3 className="text-[13px] font-bold text-white border-b border-[#222] pb-2">Draw stats</h3>
+                        
+                        <div className="grid sm:grid-cols-2 gap-4 text-[11.5px] font-mono text-zinc-400">
+                          <div className="bg-zinc-950/40 p-3 border border-[#222] rounded-lg space-y-1.5">
+                            <span className="text-[9px] text-zinc-500 uppercase font-black block font-sans">Draw Metrics</span>
+                            <div className="flex justify-between">
+                              <span>Executed Draws:</span>
+                              <span className="font-bold text-white">{adminDraws.length}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Draft/Simulated:</span>
+                              <span className="font-bold text-white">{adminDraws.filter(d => d.status === 'simulated').length}</span>
+                            </div>
+                          </div>
+
+                          <div className="bg-zinc-950/40 p-3 border border-[#222] rounded-lg space-y-1.5">
+                            <span className="text-[9px] text-zinc-500 uppercase font-black block font-sans">Payout Metrics</span>
+                            <div className="flex justify-between">
+                              <span>Claims Submitted:</span>
+                              <span className="font-bold text-white">{adminWinners.length}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Payouts Disbursed:</span>
+                              <span className="font-bold text-white">{adminWinners.filter(w => w.payment_status === 'paid').length}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                </div>
+
+              </div>
+
+              {/* Admin Modal: Edit User Scores */}
+              {showUserScoresModal && selectedUserScores && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                  <div className="bg-[#141414] border border-[#2e2e2e] rounded-xl max-w-[440px] w-full p-6 space-y-4 animate-scaleUp">
+                    <div className="flex justify-between items-start border-b border-[#222] pb-2">
+                      <div>
+                        <h3 className="text-[15px] font-bold text-white">Scores: {selectedUserScores.full_name || selectedUserScores.email}</h3>
+                        <p className="text-[12px] text-zinc-400">Review or delete rounds logged for this profile.</p>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          setShowUserScoresModal(false);
+                          setSelectedUserScores(null);
+                        }}
+                        className="text-zinc-500 hover:text-white text-[20px] font-bold leading-none"
+                      >
+                        &times;
+                      </button>
+                    </div>
+
+                    <div className="space-y-2 max-h-[260px] overflow-y-auto font-mono text-[12px]">
+                      {(selectedUserScores.scores || []).length === 0 ? (
+                        <p className="text-center py-6 text-zinc-500 italic font-sans text-[12.5px]">No scores logged for this user.</p>
+                      ) : (
+                        selectedUserScores.scores.map((sc) => (
+                          <div key={sc.id} className="flex justify-between items-center p-3 bg-zinc-950/60 border border-[#222] rounded-lg">
+                            <div>
+                              <p className="font-bold text-white">Points: {sc.score_value}</p>
+                              <p className="text-[11px] text-zinc-500 font-sans">Date: {sc.score_date}</p>
+                            </div>
+                            <button
+                              onClick={() => handleAdminDeleteScore(sc.id)}
+                              className="p-1 text-zinc-500 hover:text-red-400 bg-zinc-900 border border-zinc-800 rounded"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Admin Modal: Add Charity */}
+              {showAddCharityModal && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                  <div className="bg-[#141414] border border-[#2e2e2e] rounded-xl max-w-[400px] w-full p-6 space-y-4 animate-scaleUp">
+                    <div className="flex justify-between items-start border-b border-[#222] pb-2">
+                      <div>
+                        <h3 className="text-[15px] font-bold text-white">Add Charity Partner</h3>
+                        <p className="text-[12px] text-zinc-400">Configure partner details.</p>
+                      </div>
+                      <button 
+                        onClick={() => setShowAddCharityModal(false)}
+                        className="text-zinc-500 hover:text-white text-[20px] font-bold leading-none"
+                      >
+                        &times;
+                      </button>
+                    </div>
+
+                    <form onSubmit={handleAdminAddCharity} className="space-y-4 text-[12.5px]">
+                      <div className="space-y-1">
+                        <label className="font-medium text-zinc-400">Charity Name</label>
+                        <input
+                          type="text"
+                          required
+                          value={newCharityName}
+                          onChange={(e) => setNewCharityName(e.target.value)}
+                          placeholder="e.g. Save the Children"
+                          className="w-full h-9 px-3 bg-zinc-950 border border-zinc-800 rounded text-white focus:outline-none focus:border-[#3ecf8e]"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="font-medium text-zinc-400">Description</label>
+                        <textarea
+                          required
+                          value={newCharityDesc}
+                          onChange={(e) => setNewCharityDesc(e.target.value)}
+                          placeholder="Mission details..."
+                          className="w-full h-16 p-3 bg-zinc-950 border border-zinc-800 rounded text-white focus:outline-none resize-none"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="font-medium text-zinc-400">Logo Image URL</label>
+                        <input
+                          type="text"
+                          value={newCharityImg}
+                          onChange={(e) => setNewCharityImg(e.target.value)}
+                          placeholder="https://..."
+                          className="w-full h-9 px-3 bg-zinc-950 border border-zinc-800 rounded text-white focus:outline-none focus:border-[#3ecf8e]"
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-2 pt-1">
+                        <input
+                          type="checkbox"
+                          id="featured"
+                          checked={newCharityFeatured}
+                          onChange={(e) => setNewCharityFeatured(e.target.checked)}
+                          className="w-4 h-4 accent-[#3ecf8e] rounded bg-zinc-950 border-zinc-800"
+                        />
+                        <label htmlFor="featured" className="font-medium text-zinc-300">Spotlight featured partner</label>
+                      </div>
+
+                      <div className="flex gap-2 justify-end pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowAddCharityModal(false)}
+                          className="px-4 py-1.5 border border-zinc-800 rounded text-[12px] text-zinc-400 hover:text-white"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          className="px-4 py-1.5 bg-[#3ecf8e] text-black font-bold rounded text-[12px]"
+                        >
+                          Save Partner
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+            </div>
+          )}
+
+          </div>
         </main>
       </div>
 
-      {/* Subscription Verifying Overlay */}
+      {/* Subscription Confirming Backdrop */}
       {verifyingSubscription && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-[#141414] border border-indigo-500/30 rounded-2xl max-w-[440px] w-full p-8 text-center space-y-6 shadow-[0_0_50px_rgba(82,39,255,0.15)] animate-fadeInUp">
-            
-            {/* Spinning logo/glow */}
-            <div className="relative mx-auto w-16 h-16 bg-indigo-600/10 border border-indigo-500/25 rounded-2xl flex items-center justify-center text-indigo-400">
-              <div className="absolute inset-0 rounded-2xl border border-dashed border-indigo-400 animate-spin" style={{ animationDuration: '6s' }} />
-              <svg width={28} height={28} viewBox="0 0 48 48" fill="none">
-                <defs>
-                  <linearGradient id="confirm-logo-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stopColor="#5227FF" />
-                    <stop offset="100%" stopColor="#8644FF" />
-                  </linearGradient>
-                </defs>
-                <path
-                  fill="url(#confirm-logo-grad)"
-                  fillRule="evenodd"
-                  d="M12 30.99V36L-.01 23.99l2.516-2.499zM17.01 36H12l12.011 12.01 2.506-2.505zm28.487-9.497L48 24 24 0l-2.503 2.503L30.98 12h-5.732l-6.62-6.614-2.506 2.503 4.122 4.122h-2.869v18.625H36V27.77l4.122 4.122 2.503-2.506L36 22.747v-5.732zM13.253 10.747l-2.503 2.506 2.686 2.686 2.503-2.506zm21.314 21.314-2.495 2.503 2.686 2.686 2.506-2.503zM7.878 16.121l-2.503 2.504L12 25.253v-5.012zM27.756 36h-5.009l6.628 6.625 2.503-2.503z"
-                  clipRule="evenodd"
-                />
-              </svg>
+          <div className="bg-[#141414] border border-indigo-500/20 rounded-xl max-w-[400px] w-full p-8 text-center space-y-6 shadow-2xl animate-fadeInUp">
+            <div className="relative mx-auto w-12 h-12 bg-indigo-500/10 border border-indigo-500/20 rounded-xl flex items-center justify-center text-indigo-400">
+              <div className="absolute inset-0 rounded-xl border border-dashed border-indigo-400 animate-spin" style={{ animationDuration: '6s' }} />
+              <Logo size={20} />
             </div>
 
-            <div className="space-y-2">
-              <h3 className="text-[18px] font-bold text-white tracking-tight">Confirming Subscription</h3>
-              <p className="text-[13px] text-zinc-400 max-w-[320px] mx-auto leading-relaxed">
-                We are securing your membership with Stripe. This takes just a moment to verify...
+            <div className="space-y-1.5">
+              <h3 className="text-[16px] font-bold text-white tracking-tight">Confirming Subscription</h3>
+              <p className="text-[12px] text-zinc-400 max-w-[280px] mx-auto leading-relaxed">
+                Securing your payment session with Stripe. This takes just a moment to verify...
               </p>
             </div>
 
-            {/* Spinner and Status Indicator */}
-            <div className="flex flex-col items-center gap-3">
-              <div className="w-5 h-5 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
-              <span className="text-[11px] font-mono text-zinc-500 uppercase tracking-widest animate-pulse">Awaiting Stripe Webhook</span>
+            <div className="flex flex-col items-center gap-2">
+              <div className="w-4 h-4 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
+              <span className="text-[9px] font-mono text-zinc-500 uppercase tracking-widest animate-pulse">Awaiting Webhook Signals</span>
             </div>
           </div>
         </div>
@@ -1802,24 +2616,23 @@ export default function DashboardPage() {
       {/* Subscription Success Modal */}
       {showSuccessModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-[#141414] border border-[#3ecf8e]/35 rounded-2xl max-w-[440px] w-full p-8 text-center space-y-6 shadow-[0_0_50px_rgba(62,207,142,0.15)] animate-fadeInUp">
-            
-            <div className="mx-auto w-16 h-16 bg-[#3ecf8e]/10 border border-[#3ecf8e]/20 rounded-full flex items-center justify-center text-[#3ecf8e]">
-              <Check size={32} strokeWidth={3} className="animate-bounce" />
+          <div className="bg-[#141414] border border-[#3ecf8e]/35 rounded-xl max-w-[400px] w-full p-8 text-center space-y-6 shadow-2xl animate-fadeInUp">
+            <div className="mx-auto w-12 h-12 bg-[#3ecf8e]/10 border border-[#3ecf8e]/20 rounded-full flex items-center justify-center text-[#3ecf8e]">
+              <Check size={24} strokeWidth={3} className="animate-bounce" />
             </div>
 
-            <div className="space-y-2">
-              <h3 className="text-[20px] font-bold text-white tracking-tight">Welcome to CauseLoop Pro!</h3>
-              <p className="text-[13px] text-zinc-400 max-w-[320px] mx-auto leading-relaxed">
-                Thank you for subscribing! Your account has been upgraded to Pro. You now have full access to CauseLoop Studio.
+            <div className="space-y-1.5">
+              <h3 className="text-[18px] font-bold text-white tracking-tight">Welcome to CauseLoop Pro!</h3>
+              <p className="text-[12.5px] text-zinc-400 max-w-[280px] mx-auto leading-relaxed">
+                Thank you for subscribing! Your membership has been upgraded to Pro successfully.
               </p>
             </div>
 
             <button
               onClick={() => setShowSuccessModal(false)}
-              className="w-full bg-white text-black hover:bg-zinc-200 font-bold py-2.5 rounded-xl text-[13.5px] transition-all shadow-[0_4px_20px_rgba(255,255,255,0.08)]"
+              className="w-full bg-[#3ecf8e] text-black hover:bg-[#32b37a] font-bold py-2 rounded-lg text-[13px] transition-all"
             >
-              Go to Dashboard
+              Go to My Dashboard
             </button>
           </div>
         </div>
@@ -1828,25 +2641,109 @@ export default function DashboardPage() {
       {/* Subscription Pending Modal */}
       {showPendingModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-[#141414] border border-amber-500/30 rounded-2xl max-w-[440px] w-full p-8 text-center space-y-6 shadow-[0_0_50px_rgba(245,158,11,0.15)] animate-fadeInUp">
-            
-            <div className="mx-auto w-16 h-16 bg-amber-500/10 border border-amber-500/20 rounded-full flex items-center justify-center text-amber-500">
-              <HelpCircle size={32} strokeWidth={2} />
+          <div className="bg-[#141414] border border-amber-500/20 rounded-xl max-w-[400px] w-full p-8 text-center space-y-6 shadow-2xl animate-fadeInUp">
+            <div className="mx-auto w-12 h-12 bg-amber-500/10 border border-amber-500/20 rounded-full flex items-center justify-center text-amber-500">
+              <HelpCircle size={24} strokeWidth={2} />
             </div>
 
-            <div className="space-y-2">
-              <h3 className="text-[18px] font-bold text-white tracking-tight">Payment Confirmation Pending</h3>
-              <p className="text-[13px] text-zinc-400 max-w-[320px] mx-auto leading-relaxed">
-                Stripe is taking a bit longer than usual to confirm your payment. Your account will automatically activate as soon as it completes.
+            <div className="space-y-1.5">
+              <h3 className="text-[17px] font-bold text-white tracking-tight">Payment Confirmation Pending</h3>
+              <p className="text-[12.5px] text-zinc-400 max-w-[280px] mx-auto leading-relaxed">
+                Stripe is taking a bit longer to confirm the payment session. Your account will upgrade automatically as soon as it clears.
               </p>
             </div>
 
             <button
               onClick={() => setShowPendingModal(false)}
-              className="w-full bg-[#222] border border-[#2e2e2e] text-zinc-200 hover:bg-[#2d2d33] font-bold py-2.5 rounded-xl text-[13.5px] transition-all"
+              className="w-full bg-zinc-900 border border-zinc-800 text-zinc-200 hover:text-white font-bold py-2 rounded-lg text-[13px] transition-all"
             >
               Dismiss
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Apple spotlight style command search modal ─── */}
+      {showSearchModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100] flex items-start justify-center pt-[15vh] px-4 animate-fadeIn" onClick={() => setShowSearchModal(false)}>
+          <div 
+            className="bg-[#141414]/95 border border-[#2e2e2e] rounded-2xl w-full max-w-[550px] shadow-2xl overflow-hidden backdrop-blur-xl animate-scaleUp flex flex-col max-h-[60vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Search Input Box */}
+            <div className="flex items-center gap-3 px-4 py-3.5 border-b border-[#222]">
+              <Search className="text-zinc-500 shrink-0" size={16} />
+              <input
+                type="text"
+                autoFocus
+                placeholder="Search commands, navigate or take actions..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={handleSearchKeyDown}
+                className="w-full bg-transparent border-0 text-white placeholder-zinc-500 focus:ring-0 focus:outline-none text-[13px] font-sans"
+              />
+              <span className="text-[9px] bg-[#1a1a1c] px-1.5 py-0.5 rounded border border-[#2e2e2e] font-mono text-zinc-500">ESC</span>
+            </div>
+
+            {/* Command List Results */}
+            <div className="flex-1 overflow-y-auto p-2 space-y-2">
+              {filteredSearchItems.length === 0 ? (
+                <div className="py-8 text-center text-[12px] text-zinc-500 italic font-sans">
+                  No commands found for &quot;{searchQuery}&quot;
+                </div>
+              ) : (
+                Object.entries(
+                  filteredSearchItems.reduce((acc, item) => {
+                    if (!acc[item.category]) acc[item.category] = [];
+                    acc[item.category].push(item);
+                    return acc;
+                  }, {})
+                ).map(([category, items]) => (
+                  <div key={category} className="space-y-0.5">
+                    <div className="text-[9px] text-zinc-500 font-bold uppercase tracking-widest px-3 py-1 font-sans">
+                      {category}
+                    </div>
+                    {items.map((item) => {
+                      const flatIndex = filteredSearchItems.findIndex(x => x.id === item.id);
+                      const isSelected = flatIndex === searchSelectedIndex;
+                      const Icon = item.icon;
+                      return (
+                        <div
+                          key={item.id}
+                          onClick={() => item.action()}
+                          onMouseEnter={() => setSearchSelectedIndex(flatIndex)}
+                          className={`flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-all ${
+                            isSelected 
+                              ? "bg-[#3ecf8e]/10 border border-[#3ecf8e]/20 text-[#3ecf8e]" 
+                              : "text-zinc-400 hover:bg-[#1a1a1f] border border-transparent"
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <Icon size={14} className={isSelected ? "text-[#3ecf8e]" : "text-zinc-500"} />
+                            <span className="text-[12.5px] font-medium font-sans">{item.label}</span>
+                          </div>
+                          {isSelected && (
+                            <span className="text-[9px] bg-[#3ecf8e]/20 text-[#3ecf8e] px-1.5 py-0.5 rounded font-mono font-bold flex items-center gap-0.5">
+                              ↵ Enter
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Footer help */}
+            <div className="bg-[#111113] border-t border-[#222] px-4 py-2 flex items-center justify-between text-[10px] text-zinc-500 font-mono">
+              <span className="flex items-center gap-1.5">
+                <span>↑↓ navigate</span>
+                <span>•</span>
+                <span>↵ select</span>
+              </span>
+              <span>Spotlight Command</span>
+            </div>
           </div>
         </div>
       )}

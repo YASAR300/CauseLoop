@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Target, Github, Chrome, Check } from "lucide-react";
@@ -16,10 +16,39 @@ export default function SignupPage() {
   const [error, setError] = useState("");
   const [isSignedUp, setIsSignedUp] = useState(false);
 
+  // Charity selection states
+  const [charities, setCharities] = useState([]);
+  const [selectedCharityId, setSelectedCharityId] = useState("");
+  const [contributionPercentage, setContributionPercentage] = useState(10);
+
+  useEffect(() => {
+    const fetchCharities = async () => {
+      try {
+        const res = await fetch("/api/charities");
+        if (res.ok) {
+          const data = await res.json();
+          const list = data.charities || [];
+          setCharities(list);
+          if (list.length > 0) {
+            const featured = list.find(c => c.is_featured);
+            setSelectedCharityId(featured ? featured.id : list[0].id);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load charities in signup:", err);
+      }
+    };
+    fetchCharities();
+  }, []);
+
   const handleSignupSubmit = async (e) => {
     e.preventDefault();
     if (!name || !email || !password) {
       setError("Please fill in all fields");
+      return;
+    }
+    if (contributionPercentage < 10) {
+      setError("Charity contribution percentage cannot be less than 10%");
       return;
     }
     setError("");
@@ -32,6 +61,8 @@ export default function SignupPage() {
       options: {
         data: {
           full_name: name,
+          charity_id: selectedCharityId || null,
+          charity_contribution_percentage: contributionPercentage,
         },
         emailRedirectTo: `${window.location.origin}/auth/callback`,
       },
@@ -56,6 +87,10 @@ export default function SignupPage() {
       provider,
       options: {
         redirectTo: callbackUrl,
+        data: {
+          charity_id: selectedCharityId || null,
+          charity_contribution_percentage: contributionPercentage,
+        }
       },
     });
 
@@ -210,6 +245,52 @@ export default function SignupPage() {
                     disabled={loading}
                     className="w-full h-10 px-3 bg-[#161616] border border-[#2a2a2a] rounded-lg text-[13.5px] text-white focus:outline-none focus:border-indigo-500/50 transition-colors"
                   />
+                </div>
+
+                {/* Charity Selection & Contribution Slice */}
+                <div className="space-y-4 pt-2 border-t border-[#222]">
+                  <div className="space-y-1.5">
+                    <label className="text-[12.5px] font-medium text-zinc-400">Supported Charity Partner</label>
+                    <select
+                      value={selectedCharityId}
+                      onChange={(e) => setSelectedCharityId(e.target.value)}
+                      disabled={loading || charities.length === 0}
+                      className="w-full h-10 px-3 bg-[#161616] border border-[#2a2a2a] rounded-lg text-[13.5px] text-white focus:outline-none focus:border-indigo-500/50 transition-colors cursor-pointer"
+                    >
+                      {charities.length === 0 ? (
+                        <option value="">Loading charities...</option>
+                      ) : (
+                        charities.map((charity) => (
+                          <option key={charity.id} value={charity.id}>
+                            {charity.name} {charity.is_featured ? "★" : ""}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between items-center text-[12.5px] font-medium text-zinc-400">
+                      <span>Charity Contribution Slice</span>
+                      <span className="text-indigo-400 font-bold">{contributionPercentage}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="10"
+                      max="100"
+                      step="5"
+                      value={contributionPercentage}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        setContributionPercentage(val >= 10 ? val : 10);
+                      }}
+                      disabled={loading}
+                      className="w-full accent-indigo-500 bg-[#161616] rounded-lg h-2 cursor-pointer border border-[#2a2a2a]"
+                    />
+                    <span className="text-[10px] text-zinc-500 block leading-normal">
+                      Select how much of your CauseLoop subscription is contributed directly to the charity (Min 10%).
+                    </span>
+                  </div>
                 </div>
 
                 <button

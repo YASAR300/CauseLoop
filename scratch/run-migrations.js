@@ -3,10 +3,10 @@ const fs = require('fs');
 const path = require('path');
 
 const config = {
-  host: 'aws-0-ap-southeast-1.pooler.supabase.com',
-  port: 6543,
+  host: 'db.wkchanfyajdivmuummsb.supabase.co',
+  port: 5432,
   database: 'postgres',
-  user: 'postgres.wkchanfyajdivmuummsb',
+  user: 'postgres',
   password: 'AMzDlo5lICqJcNxY',
   ssl: {
     rejectUnauthorized: false
@@ -17,13 +17,14 @@ const migrations = [
   '001_initial_schema.sql',
   '002_rls_and_policies.sql',
   '002_stripe_events.sql',
-  '003_indexes.sql'
+  '003_indexes.sql',
+  '004_update_signup_trigger.sql'
 ];
 
 async function run() {
   const client = new Client(config);
   try {
-    console.log('Connecting to remote Supabase pooler...');
+    console.log('Connecting to database...');
     await client.connect();
     console.log('Connected successfully!');
 
