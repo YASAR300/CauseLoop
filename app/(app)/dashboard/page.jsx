@@ -134,39 +134,74 @@ export default function DashboardPage() {
                 setSubscription(sub);
 
                 if (isCheckoutSuccess) {
-                  // If we don't have an active subscription yet, start polling
+                  // If we don't have an active subscription yet, start immediate confirmation and polling
                   if (!sub || sub.status !== "active") {
                     setVerifyingSubscription(true);
                     setLoading(false); // Let dashboard load behind verification backdrop
-                    
-                    let attempts = 0;
-                    const maxAttempts = 12; // 18 seconds total
-                    const intervalId = setInterval(() => {
-                      attempts++;
-                      supabase
-                        .from("subscriptions")
-                        .select("*")
-                        .eq("user_id", currentUser.id)
-                        .maybeSingle()
-                        .then(({ data: freshSub }) => {
-                          if (freshSub && freshSub.status === "active") {
-                            clearInterval(intervalId);
-                            setSubscription(freshSub);
-                            setVerifyingSubscription(false);
-                            setShowSuccessModal(true);
-                            // Clean up URL query params
-                            const cleanUrl = window.location.pathname;
-                            window.history.replaceState({}, document.title, cleanUrl);
-                          } else if (attempts >= maxAttempts) {
-                            clearInterval(intervalId);
-                            setVerifyingSubscription(false);
-                            setShowPendingModal(true);
-                            // Clean up URL query params
-                            const cleanUrl = window.location.pathname;
-                            window.history.replaceState({}, document.title, cleanUrl);
+
+                    const sessionId = searchParams.get("session_id");
+
+                    const cleanAndComplete = (activeSub) => {
+                      setSubscription(activeSub);
+                      setVerifyingSubscription(false);
+                      setShowSuccessModal(true);
+                      // Clean up URL query params
+                      const cleanUrl = window.location.pathname;
+                      window.history.replaceState({}, document.title, cleanUrl);
+                    };
+
+                    let isCompleted = false;
+
+                    const startPolling = () => {
+                      if (isCompleted) return;
+                      let attempts = 0;
+                      const maxAttempts = 12; // 18 seconds total
+                      const intervalId = setInterval(() => {
+                        if (isCompleted) {
+                          clearInterval(intervalId);
+                          return;
+                        }
+                        attempts++;
+                        supabase
+                          .from("subscriptions")
+                          .select("*")
+                          .eq("user_id", currentUser.id)
+                          .maybeSingle()
+                          .then(({ data: freshSub }) => {
+                            if (freshSub && freshSub.status === "active") {
+                              isCompleted = true;
+                              clearInterval(intervalId);
+                              cleanAndComplete(freshSub);
+                            } else if (attempts >= maxAttempts) {
+                              clearInterval(intervalId);
+                              setVerifyingSubscription(false);
+                              setShowPendingModal(true);
+                              const cleanUrl = window.location.pathname;
+                              window.history.replaceState({}, document.title, cleanUrl);
+                            }
+                          });
+                      }, 1500);
+                    };
+
+                    // Try immediate confirmation if session_id is available
+                    if (sessionId) {
+                      fetch(`/api/checkout/confirm?session_id=${sessionId}`)
+                        .then((res) => res.json())
+                        .then((data) => {
+                          if (data && data.status === "active") {
+                            isCompleted = true;
+                            cleanAndComplete(data.subscription);
+                          } else {
+                            startPolling();
                           }
+                        })
+                        .catch((err) => {
+                          console.error("Error confirming checkout session:", err);
+                          startPolling();
                         });
-                    }, 1500);
+                    } else {
+                      startPolling();
+                    }
                   } else {
                     // Already active, just show success modal
                     setShowSuccessModal(true);

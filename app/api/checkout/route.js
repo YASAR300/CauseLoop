@@ -4,8 +4,7 @@ import { createServerClient } from "@/lib/supabase/server";
 
 export async function GET(request) {
   try {
-    const { searchParams } = new URL(request.url);
-    const plan = searchParams.get("plan");
+    const plan = request.nextUrl.searchParams.get("plan");
 
     const supabase = createServerClient();
     const { data: { user } } = await supabase.auth.getUser();
@@ -17,10 +16,14 @@ export async function GET(request) {
     }
 
     let priceId = null;
-    if (plan === "monthly") {
-      priceId = process.env.STRIPE_PRICE_MONTHLY || "price_1TkSdNIUEU1f1CxDmLfYrj5D";
-    } else if (plan === "yearly") {
-      priceId = process.env.STRIPE_PRICE_YEARLY || "price_1TkSdPIUEU1f1CxDZapSzNNQ";
+    const cleanPlan = (plan || "").trim().toLowerCase();
+
+    if (cleanPlan === "monthly") {
+      const envPrice = (process.env.STRIPE_PRICE_MONTHLY || "").trim();
+      priceId = envPrice.startsWith("price_") ? envPrice : "price_1TkSdNIUEU1f1CxDmLfYrj5D";
+    } else if (cleanPlan === "yearly") {
+      const envPrice = (process.env.STRIPE_PRICE_YEARLY || "").trim();
+      priceId = envPrice.startsWith("price_") ? envPrice : "price_1TkSdPIUEU1f1CxDZapSzNNQ";
     }
 
     if (!priceId) {
@@ -41,7 +44,7 @@ export async function GET(request) {
       metadata: {
         supabase_user_id: user.id,
       },
-      success_url: `${origin}/dashboard?checkout=success`,
+      success_url: `${origin}/dashboard?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/subscribe`,
     });
 
@@ -64,10 +67,14 @@ export async function POST(request) {
 
     const { plan } = await request.json();
     let priceId = null;
-    if (plan === "monthly") {
-      priceId = process.env.STRIPE_PRICE_MONTHLY || "price_1TkSdNIUEU1f1CxDmLfYrj5D";
-    } else if (plan === "yearly") {
-      priceId = process.env.STRIPE_PRICE_YEARLY || "price_1TkSdPIUEU1f1CxDZapSzNNQ";
+    const cleanPlan = (plan || "").trim().toLowerCase();
+
+    if (cleanPlan === "monthly") {
+      const envPrice = (process.env.STRIPE_PRICE_MONTHLY || "").trim();
+      priceId = envPrice.startsWith("price_") ? envPrice : "price_1TkSdNIUEU1f1CxDmLfYrj5D";
+    } else if (cleanPlan === "yearly") {
+      const envPrice = (process.env.STRIPE_PRICE_YEARLY || "").trim();
+      priceId = envPrice.startsWith("price_") ? envPrice : "price_1TkSdPIUEU1f1CxDZapSzNNQ";
     }
 
     if (!priceId) {
@@ -90,7 +97,7 @@ export async function POST(request) {
       metadata: {
         supabase_user_id: user.id,
       },
-      success_url: `${origin}/dashboard?checkout=success`,
+      success_url: `${origin}/dashboard?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/subscribe`,
     });
 
