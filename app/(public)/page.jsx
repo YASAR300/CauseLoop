@@ -24,9 +24,11 @@ import {
   Zap,
   Activity,
   Coins,
-  UserPlus
+  UserPlus,
+  LogOut
 } from "lucide-react";
 import dynamic from "next/dynamic";
+import { createClient } from "@/lib/supabase/client";
 
 const Silk = dynamic(() => import("@/components/ui/silk"), { ssr: false });
 const ScrollReveal = dynamic(() => import("@/components/ui/scroll-reveal"), { ssr: false });
@@ -60,15 +62,49 @@ const NAV_ITEMS = [
   { label: "Pricing", href: "#pricing" },
 ];
 
-function Navbar() {
+function Navbar({ user: propUser, loading: propLoading }) {
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
+  const [localUser, setLocalUser] = useState(null);
+  const [localLoading, setLocalLoading] = useState(true);
+
+  const user = propUser !== undefined ? propUser : localUser;
+  const loading = propLoading !== undefined ? propLoading : localLoading;
 
   useEffect(() => {
     const fn = () => setScrolled(window.scrollY > 20);
     window.addEventListener("scroll", fn, { passive: true });
-    return () => window.removeEventListener("scroll", fn);
-  }, []);
+
+    if (propUser === undefined) {
+      // Fetch initial user session
+      const supabase = createClient();
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        setLocalUser(session?.user ?? null);
+        setLocalLoading(false);
+      });
+
+      // Listen for auth changes
+      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+        setLocalUser(session?.user ?? null);
+        setLocalLoading(false);
+      });
+
+      return () => {
+        window.removeEventListener("scroll", fn);
+        subscription.unsubscribe();
+      };
+    }
+
+    return () => {
+      window.removeEventListener("scroll", fn);
+    };
+  }, [propUser]);
+
+  const handleSignOut = async () => {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    window.location.reload();
+  };
 
   return (
     <header className="fixed top-0 inset-x-0 z-50 transition-all duration-500 py-3">
@@ -103,19 +139,52 @@ function Navbar() {
 
         {/* Action Button */}
         <div className="hidden md:flex items-center gap-4 ml-auto shrink-0">
-          <Link
-            href="/login"
-            className="text-[13.5px] font-medium text-zinc-400 hover:text-white transition-colors"
-          >
-            Log in
-          </Link>
-          <Link
-            href="/signup"
-            className="inline-flex items-center gap-1.5 text-[13px] font-semibold bg-white text-black px-4 py-2 rounded-xl hover:bg-zinc-200 hover:scale-[1.02] transition-all shadow-[0_4px_20px_rgba(255,255,255,0.1)]"
-          >
-            <Download size={13} strokeWidth={2.5} />
-            Get Started
-          </Link>
+          {!loading && user ? (
+            <div className="flex items-center gap-3">
+              <Link
+                href="/dashboard"
+                className="inline-flex items-center gap-1.5 text-[13px] font-semibold bg-white text-black px-4 py-2 rounded-xl hover:bg-zinc-200 hover:scale-[1.02] transition-all shadow-[0_4px_20px_rgba(255,255,255,0.1)]"
+              >
+                Go to Dashboard
+              </Link>
+              <div className="relative group">
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 border border-zinc-800 flex items-center justify-center font-bold text-white text-[12px] shadow-sm select-none cursor-pointer">
+                  {user.email?.[0].toUpperCase()}
+                </div>
+                <div className="absolute right-0 mt-2 w-48 bg-zinc-950 border border-zinc-800 rounded-xl shadow-2xl py-1.5 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
+                  <div className="px-4 py-2 border-b border-zinc-900">
+                    <p className="text-[11px] text-zinc-500 truncate">Signed in as</p>
+                    <p className="text-[12px] font-semibold text-white truncate mt-0.5">{user.email}</p>
+                  </div>
+                  <Link href="/dashboard" className="block px-4 py-2 text-[12px] text-zinc-300 hover:text-white hover:bg-zinc-900 transition-colors">
+                    Dashboard
+                  </Link>
+                  <button
+                    onClick={handleSignOut}
+                    className="w-full text-left px-4 py-2 text-[12px] text-red-400 hover:text-red-300 hover:bg-red-500/5 transition-colors border-t border-zinc-900 mt-1"
+                  >
+                    Sign Out
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <Link
+                href="/login"
+                className="text-[13.5px] font-medium text-zinc-400 hover:text-white transition-colors"
+              >
+                Log in
+              </Link>
+              <Link
+                href="/signup"
+                className="inline-flex items-center gap-1.5 text-[13px] font-semibold bg-white text-black px-4 py-2 rounded-xl hover:bg-zinc-200 hover:scale-[1.02] transition-all shadow-[0_4px_20px_rgba(255,255,255,0.1)]"
+              >
+                <Download size={13} strokeWidth={2.5} />
+                Get Started
+              </Link>
+            </>
+          )}
         </div>
 
         {/* Mobile menu toggle */}
@@ -141,20 +210,53 @@ function Navbar() {
             </Link>
           ))}
           <div className="flex gap-2 pt-4 border-t border-white/[0.06] mt-3">
-            <Link
-              href="/login"
-              onClick={() => setOpen(false)}
-              className="flex-1 text-center text-[13px] font-medium text-zinc-300 border border-white/[0.1] rounded-xl py-2.5 hover:bg-white/[0.02] transition-all"
-            >
-              Log in
-            </Link>
-            <Link
-              href="/signup"
-              onClick={() => setOpen(false)}
-              className="flex-1 text-center text-[13px] font-semibold bg-white text-black rounded-xl py-2.5 hover:bg-zinc-200 transition-all"
-            >
-              Get Started
-            </Link>
+            {!loading && user ? (
+              <div className="flex flex-col gap-2.5 w-full">
+                <div className="flex items-center gap-3 px-3 py-1.5 bg-white/[0.02] border border-white/[0.06] rounded-xl">
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-white text-[12px] shadow-sm select-none">
+                    {user.email?.[0].toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[12px] font-semibold text-white truncate">{user.email}</p>
+                  </div>
+                </div>
+                <div className="flex gap-2 w-full">
+                  <Link
+                    href="/dashboard"
+                    onClick={() => setOpen(false)}
+                    className="flex-1 text-center text-[13px] font-semibold bg-white text-black rounded-xl py-2.5 hover:bg-zinc-200 transition-all"
+                  >
+                    Dashboard
+                  </Link>
+                  <button
+                    onClick={() => {
+                      setOpen(false);
+                      handleSignOut();
+                    }}
+                    className="flex-1 text-center text-[13px] font-semibold bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl py-2.5 hover:bg-red-500/20 transition-all"
+                  >
+                    Sign Out
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <Link
+                  href="/login"
+                  onClick={() => setOpen(false)}
+                  className="flex-1 text-center text-[13px] font-medium text-zinc-300 border border-white/[0.1] rounded-xl py-2.5 hover:bg-white/[0.02] transition-all"
+                >
+                  Log in
+                </Link>
+                <Link
+                  href="/signup"
+                  onClick={() => setOpen(false)}
+                  className="flex-1 text-center text-[13px] font-semibold bg-white text-black rounded-xl py-2.5 hover:bg-zinc-200 transition-all"
+                >
+                  Get Started
+                </Link>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -163,7 +265,7 @@ function Navbar() {
 }
 
 // ─── Hero — centered layout with Silk indigo-purple background ──────────────
-function Hero() {
+function Hero({ user, loading }) {
   return (
     <section className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden bg-[#020205]">
       {/* Silk background configuration */}
@@ -200,20 +302,31 @@ function Hero() {
 
         {/* Buttons */}
         <div className="mt-9 flex flex-col sm:flex-row items-center gap-3.5 w-full justify-center">
-          <Link
-            href="/signup"
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-white text-black text-[14px] font-bold px-6 py-3.5 rounded-xl hover:bg-zinc-200 hover:scale-[1.02] transition-all shadow-[0_8px_30px_rgba(82,39,255,0.25)]"
-          >
-            <Download size={14} strokeWidth={2.5} />
-            Start Free Trial
-          </Link>
-          <Link
-            href="/signup"
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-white/[0.04] border border-white/[0.08] text-white text-[14px] font-bold px-6 py-3.5 rounded-xl hover:bg-white/[0.08] hover:scale-[1.02] transition-all backdrop-blur-md"
-          >
-            <Heart size={14} strokeWidth={2.5} className="text-indigo-400" />
-            Choose Your Charity
-          </Link>
+          {!loading && user ? (
+            <Link
+              href="/dashboard"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-white text-black text-[14.5px] font-bold px-8 py-3.5 rounded-xl hover:bg-zinc-200 hover:scale-[1.02] transition-all shadow-[0_8px_30px_rgba(255,255,255,0.25)]"
+            >
+              Go to Dashboard
+            </Link>
+          ) : (
+            <>
+              <Link
+                href="/signup"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-white text-black text-[14px] font-bold px-6 py-3.5 rounded-xl hover:bg-zinc-200 hover:scale-[1.02] transition-all shadow-[0_8px_30px_rgba(82,39,255,0.25)]"
+              >
+                <Download size={14} strokeWidth={2.5} />
+                Start Free Trial
+              </Link>
+              <Link
+                href="/signup"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-white/[0.04] border border-white/[0.08] text-white text-[14px] font-bold px-6 py-3.5 rounded-xl hover:bg-white/[0.08] hover:scale-[1.02] transition-all backdrop-blur-md"
+              >
+                <Heart size={14} strokeWidth={2.5} className="text-indigo-400" />
+                Choose Your Charity
+              </Link>
+            </>
+          )}
         </div>
 
         {/* Sub Info & Announcement */}
@@ -785,7 +898,8 @@ function DrawsSection() {
 }
 
 // ─── Pricing ─────────────────────────────────────────────────────────────────
-function PricingSection() {
+// ─── Pricing ─────────────────────────────────────────────────────────────────
+function PricingSection({ user, loading }) {
   const [yearly, setYearly] = useState(false);
 
   const FREE_FEATURES = ["Browse charity profiles", "View public leaderboard", "Read the updates"];
@@ -855,12 +969,21 @@ function PricingSection() {
                 ))}
               </div>
             </div>
-            <Link
-              href="/signup"
-              className="mt-8 block text-center text-[13.5px] font-bold border border-white/[0.08] text-white py-3 rounded-xl hover:bg-white/[0.02] transition-all"
-            >
-              Get Started Free
-            </Link>
+            {!loading && user ? (
+              <Link
+                href="/dashboard"
+                className="mt-8 block text-center text-[13.5px] font-bold border border-white/[0.08] text-white py-3 rounded-xl hover:bg-white/[0.02] transition-all"
+              >
+                Go to Dashboard
+              </Link>
+            ) : (
+              <Link
+                href="/signup"
+                className="mt-8 block text-center text-[13.5px] font-bold border border-white/[0.08] text-white py-3 rounded-xl hover:bg-white/[0.02] transition-all"
+              >
+                Get Started Free
+              </Link>
+            )}
           </div>
 
           {/* Pro / Subscriber */}
@@ -891,12 +1014,21 @@ function PricingSection() {
                 ))}
               </div>
             </div>
-            <Link
-              href="/signup"
-              className="mt-8 block text-center text-[13.5px] font-bold bg-white text-black py-3 rounded-xl hover:bg-zinc-200 transition-all hover:scale-[1.01] shadow-[0_4px_15px_rgba(255,255,255,0.1)]"
-            >
-              Start 14-Day Free Trial
-            </Link>
+            {!loading && user ? (
+              <Link
+                href="/dashboard"
+                className="mt-8 block text-center text-[13.5px] font-bold bg-white text-black py-3 rounded-xl hover:bg-zinc-200 transition-all hover:scale-[1.01] shadow-[0_4px_15px_rgba(255,255,255,0.1)]"
+              >
+                Go to Dashboard
+              </Link>
+            ) : (
+              <Link
+                href="/signup"
+                className="mt-8 block text-center text-[13.5px] font-bold bg-white text-black py-3 rounded-xl hover:bg-zinc-200 transition-all hover:scale-[1.01] shadow-[0_4px_15px_rgba(255,255,255,0.1)]"
+              >
+                Start 14-Day Free Trial
+              </Link>
+            )}
           </div>
         </div>
       </div>
@@ -905,7 +1037,7 @@ function PricingSection() {
 }
 
 // ─── Bottom CTA — Purple ambient glow background ─────────────────────────────
-function BottomCTA() {
+function BottomCTA({ user, loading }) {
   return (
     <section className="relative bg-[#020205] py-32 border-t border-white/[0.04] overflow-hidden">
       {/* Silk background configuration */}
@@ -948,19 +1080,30 @@ function BottomCTA() {
           Subscribe to CauseLoop and start tracking, winning.
         </ScrollReveal>
         <div className="flex flex-col sm:flex-row items-center justify-center gap-3.5 mt-9 w-full sm:w-auto">
-          <Link
-            href="/signup"
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-white text-black text-[14px] font-bold px-6 py-3.5 rounded-xl hover:bg-zinc-200 transition-all hover:scale-[1.02] shadow-[0_8px_30px_rgba(82,39,255,0.2)]"
-          >
-            <Download size={14} strokeWidth={2.5} />
-            Start Free Trial
-          </Link>
-          <Link
-            href="#how-it-works"
-            className="w-full sm:w-auto inline-flex items-center justify-center text-[14px] text-zinc-400 hover:text-white transition-colors font-bold py-3.5"
-          >
-            Learn more <ArrowRight size={14} className="ml-1.5" />
-          </Link>
+          {!loading && user ? (
+            <Link
+              href="/dashboard"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-white text-black text-[14.5px] font-bold px-8 py-3.5 rounded-xl hover:bg-zinc-200 hover:scale-[1.02] transition-all shadow-[0_8px_30px_rgba(255,255,255,0.25)]"
+            >
+              Go to Dashboard
+            </Link>
+          ) : (
+            <>
+              <Link
+                href="/signup"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-white text-black text-[14px] font-bold px-6 py-3.5 rounded-xl hover:bg-zinc-200 transition-all hover:scale-[1.02] shadow-[0_8px_30px_rgba(82,39,255,0.2)]"
+              >
+                <Download size={14} strokeWidth={2.5} />
+                Start Free Trial
+              </Link>
+              <Link
+                href="#how-it-works"
+                className="w-full sm:w-auto inline-flex items-center justify-center text-[14px] text-zinc-400 hover:text-white transition-colors font-bold py-3.5"
+              >
+                Learn more <ArrowRight size={14} className="ml-1.5" />
+              </Link>
+            </>
+          )}
         </div>
         <p className="mt-5 text-[12.5px] text-zinc-500">No card required · Instant 14-day access</p>
       </div>
@@ -1039,17 +1182,39 @@ function Footer() {
 
 // ─── Main Page Shell ──────────────────────────────────────────────────────────
 export default function HomePage() {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const supabase = createClient();
+    // Fetch initial user session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      setLoading(false);
+    });
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      setLoading(false);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
   return (
     <div className="bg-[#020205] min-h-screen text-white font-sans selection:bg-indigo-500/25 selection:text-white antialiased">
-      <Navbar />
-      <Hero />
+      <Navbar user={user} loading={loading} />
+      <Hero user={user} loading={loading} />
       <TimeSection />
       <FeaturesSection />
       <HowItWorksSection />
       <CharitiesSection />
       <DrawsSection />
-      <PricingSection />
-      <BottomCTA />
+      <PricingSection user={user} loading={loading} />
+      <BottomCTA user={user} loading={loading} />
       <Footer />
     </div>
   );

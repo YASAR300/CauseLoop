@@ -1,12 +1,8 @@
 // ============================================================
 // middleware.js
-// Session refresh middleware using @supabase/ssr
-// Keeps cookies fresh on every request so Server Components
-// always have a valid session without explicit re-login.
+// Session refresh and route protection middleware using @supabase/ssr
 // ============================================================
 
-// Must be nodejs — @supabase/supabase-js uses Node.js APIs not
-// available in the Edge Runtime.
 export const runtime = "nodejs";
 
 import { createServerClient } from "@supabase/ssr";
@@ -26,7 +22,6 @@ export async function middleware(request) {
           return request.cookies.get(name)?.value;
         },
         set(name, value, options) {
-          // Write the cookie back on both request and response
           request.cookies.set({ name, value, ...options });
           response = NextResponse.next({ request: { headers: request.headers } });
           response.cookies.set({ name, value, ...options });
@@ -40,8 +35,44 @@ export async function middleware(request) {
     }
   );
 
-  // Refresh the user session (no-op if session is still valid)
-  await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
+  const { pathname } = request.nextUrl;
+
+  // Protect all /dashboard routes (app route group)
+  if (pathname.startsWith("/dashboard")) {
+    if (!user) {
+      // Redirect to login with ?redirect query param
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/login";
+      redirectUrl.searchParams.set("redirect", pathname + request.nextUrl.search);
+      return NextResponse.redirect(redirectUrl);
+    }
+
+    // Read the user's role from their profile in the database
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .single();
+
+    const userRole = profile?.role || "visitor";
+
+    // TODO: add active-subscription check here
+
+    // Role-based route protection: deny non-admins from admin sections
+    if (pathname.startsWith("/dashboard/admin") && userRole !== "admin") {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/dashboard";
+      return NextResponse.redirect(redirectUrl);
+    }
+  }
+
+  // Redirect authenticated users trying to access login/signup back to dashboard
+  if (user && (pathname === "/login" || pathname === "/signup")) {
+    const redirectUrl = request.nextUrl.clone();
+    redirectUrl.pathname = "/dashboard";
+    return NextResponse.redirect(redirectUrl);
+  }
 
   return response;
 }

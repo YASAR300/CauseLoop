@@ -184,8 +184,13 @@ CREATE TRIGGER trg_winners_updated_at
 CREATE OR REPLACE FUNCTION handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
-  INSERT INTO public.profiles (id, full_name)
-  VALUES (NEW.id, NEW.raw_user_meta_data->>'full_name');
+  INSERT INTO public.profiles (id, role, full_name, charity_contribution_percentage)
+  VALUES (
+    NEW.id,
+    'subscriber'::user_role,
+    COALESCE(NEW.raw_user_meta_data->>'full_name', ''),
+    10.00
+  );
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;

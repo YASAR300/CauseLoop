@@ -2,35 +2,40 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { Check, Mail } from "lucide-react";
+import { Check } from "lucide-react";
 
-export default function ResetPasswordPage() {
-  const [email, setEmail] = useState("");
+export default function UpdatePasswordPage() {
+  const router = useRouter();
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [submitted, setSubmitted] = useState(false);
 
-  const handleReset = async (e) => {
+  const handleUpdatePassword = async (e) => {
     e.preventDefault();
-    if (!email) {
-      setError("Please enter your email address");
+    if (!password || password.length < 6) {
+      setError("Password must be at least 6 characters long");
       return;
     }
     setError("");
     setLoading(true);
 
     const supabase = createClient();
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/auth/callback?next=/reset-password/update`,
+    const { error: updateError } = await supabase.auth.updateUser({
+      password: password,
     });
 
-    if (resetError) {
-      setError(resetError.message);
+    if (updateError) {
+      setError(updateError.message);
       setLoading(false);
     } else {
       setLoading(false);
       setSubmitted(true);
+      setTimeout(() => {
+        router.push("/dashboard");
+      }, 1500);
     }
   };
 
@@ -42,13 +47,13 @@ export default function ResetPasswordPage() {
         <Link href="/" className="flex items-center gap-2 mb-8 shrink-0">
           <svg width={22} height={22} viewBox="0 0 48 48" fill="none">
             <defs>
-              <linearGradient id="reset-logo-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <linearGradient id="update-logo-grad" x1="0%" y1="0%" x2="100%" y2="100%">
                 <stop offset="0%" stopColor="#5227FF" />
                 <stop offset="100%" stopColor="#8644FF" />
               </linearGradient>
             </defs>
             <path
-              fill="url(#reset-logo-grad)"
+              fill="url(#update-logo-grad)"
               fillRule="evenodd"
               d="M12 30.99V36L-.01 23.99l2.516-2.499zM17.01 36H12l12.011 12.01 2.506-2.505zm28.487-9.497L48 24 24 0l-2.503 2.503L30.98 12h-5.732l-6.62-6.614-2.506 2.503 4.122 4.122h-2.869v18.625H36V27.77l4.122 4.122 2.503-2.506L36 22.747v-5.732zM13.253 10.747l-2.503 2.506 2.686 2.686 2.503-2.506zm21.314 21.314-2.495 2.503 2.686 2.686 2.506-2.503zM7.878 16.121l-2.503 2.504L12 25.253v-5.012zM27.756 36h-5.009l6.628 6.625 2.503-2.503z"
               clipRule="evenodd"
@@ -62,46 +67,37 @@ export default function ResetPasswordPage() {
           {submitted ? (
             /* Confirmation Block */
             <div className="space-y-6">
-              <h1 className="text-[26px] font-bold tracking-tight text-white leading-tight">Reset Password</h1>
-              <p className="text-[13px] text-zinc-500 mt-1.5">Check your inbox for a recovery link</p>
+              <h1 className="text-[26px] font-bold tracking-tight text-white leading-tight">Update Password</h1>
+              <p className="text-[13px] text-zinc-500 mt-1.5">Password changed successfully</p>
 
               <div className="border border-[#222] bg-[#161616] rounded-xl p-5 flex items-start gap-4 shadow-lg">
                 <div className="w-8 h-8 rounded-lg bg-zinc-900 border border-[#2e2e2e] flex items-center justify-center text-zinc-300 mt-0.5 shrink-0">
-                  <Check size={16} strokeWidth={2.5} />
+                  <Check size={16} strokeWidth={2.5} className="text-emerald-400" />
                 </div>
                 <div className="space-y-1">
-                  <h4 className="text-[13.5px] font-bold text-white font-sans">Reset link sent!</h4>
+                  <h4 className="text-[13.5px] font-bold text-white">Password Updated!</h4>
                   <p className="text-[12px] text-zinc-400 leading-normal">
-                    We have emailed a password recovery link to your address. Please check your inbox and click the link to set a new password.
+                    Your password has been changed. You will now be redirected to the dashboard.
                   </p>
                 </div>
-              </div>
-
-              <div className="text-center mt-6">
-                <p className="text-[12.5px] text-zinc-500">
-                  Remember your password?{" "}
-                  <Link href="/login" className="text-indigo-400 hover:underline font-semibold ml-0.5">
-                    Sign in
-                  </Link>
-                </p>
               </div>
             </div>
           ) : (
             /* Input Form */
             <div>
-              <h1 className="text-[26px] font-bold tracking-tight text-white leading-tight">Reset Password</h1>
-              <p className="text-[13px] text-zinc-500 mt-1.5">We will send you a password recovery link</p>
+              <h1 className="text-[26px] font-bold tracking-tight text-white leading-tight">Update Password</h1>
+              <p className="text-[13px] text-zinc-500 mt-1.5">Enter your new account password below</p>
 
               {error && <p className="text-red-500 text-[12px] my-3 text-center bg-red-500/10 py-1.5 px-3 border border-red-500/20 rounded-md">{error}</p>}
 
-              <form onSubmit={handleReset} className="space-y-4 mt-6">
+              <form onSubmit={handleUpdatePassword} className="space-y-4 mt-6">
                 <div className="space-y-1.5">
-                  <label className="text-[12.5px] font-medium text-zinc-400">Email Address</label>
+                  <label className="text-[12.5px] font-medium text-zinc-400">New Password</label>
                   <input
-                    type="email"
-                    placeholder="name@example.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    type="password"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
                     disabled={loading}
                     className="w-full h-10 px-3 bg-[#161616] border border-[#2a2a2a] rounded-lg text-[13.5px] text-white focus:outline-none focus:border-indigo-500/50 transition-colors"
                   />
@@ -112,18 +108,9 @@ export default function ResetPasswordPage() {
                   disabled={loading}
                   className="w-full h-10 mt-2 bg-white text-black hover:bg-zinc-200 font-bold text-[13.5px] rounded-lg flex items-center justify-center transition-all shadow-[0_4px_15px_rgba(255,255,255,0.06)]"
                 >
-                  {loading ? "Sending link..." : "Send Reset Link"}
+                  {loading ? "Updating..." : "Update Password"}
                 </button>
               </form>
-
-              <div className="text-center mt-6">
-                <p className="text-[12.5px] text-zinc-500">
-                  Remember your password?{" "}
-                  <Link href="/login" className="text-indigo-400 hover:underline font-semibold ml-0.5">
-                    Sign in
-                  </Link>
-                </p>
-              </div>
             </div>
           )}
         </div>
