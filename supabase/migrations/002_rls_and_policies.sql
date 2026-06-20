@@ -134,6 +134,11 @@ CREATE POLICY "scores: own update"
   USING (user_id = auth.uid())
   WITH CHECK (user_id = auth.uid());
 
+DROP POLICY IF EXISTS "scores: own delete" ON scores;
+CREATE POLICY "scores: own delete"
+  ON scores FOR DELETE
+  USING (user_id = auth.uid());
+
 DROP POLICY IF EXISTS "scores: admin delete" ON scores;
 CREATE POLICY "scores: admin delete"
   ON scores FOR DELETE

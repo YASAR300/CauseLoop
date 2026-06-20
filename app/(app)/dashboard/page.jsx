@@ -79,15 +79,20 @@ export default function DashboardPage() {
   const [showServiceKey, setShowServiceKey] = useState(false);
 
   // Scores State (Table Editor)
-  const [scores, setScores] = useState([
-    { id: "1", course: "Pinehurst No. 2", date: "2026-06-18", strokes: 79, net: "Net +2", diff: 8.4 },
-    { id: "2", course: "St Andrews (Old)", date: "2026-06-10", strokes: 82, net: "Net +5", diff: 11.2 },
-    { id: "3", course: "Pebble Beach GL", date: "2026-05-28", strokes: 80, net: "Net +3", diff: 9.6 }
-  ]);
-  const [newCourse, setNewCourse] = useState("");
-  const [newStrokes, setNewStrokes] = useState("");
-  const [newDate, setNewDate] = useState("2026-06-20");
+  const [scores, setScores] = useState([]);
+  const [scoreValue, setScoreValue] = useState("");
+  const [scoreDate, setScoreDate] = useState("2026-06-20");
   const [showAddScoreModal, setShowAddScoreModal] = useState(false);
+  const [addErrorMessage, setAddErrorMessage] = useState("");
+  const [addDuplicateScoreId, setAddDuplicateScoreId] = useState(null);
+
+  // Editing Score State
+  const [editingScore, setEditingScore] = useState(null);
+  const [editScoreValue, setEditScoreValue] = useState("");
+  const [editScoreDate, setEditScoreDate] = useState("");
+  const [editErrorMessage, setEditErrorMessage] = useState("");
+  const [editDuplicateScoreId, setEditDuplicateScoreId] = useState(null);
+  const [showEditScoreModal, setShowEditScoreModal] = useState(false);
 
   // SQL Editor State
   const [selectedQuery, setSelectedQuery] = useState("select_draws");
@@ -104,6 +109,18 @@ export default function DashboardPage() {
   const [projectName, setProjectName] = useState("");
   const [saveSuccess, setSaveSuccess] = useState(false);
 
+  const fetchScores = async () => {
+    try {
+      const res = await fetch("/api/scores");
+      if (res.ok) {
+        const data = await res.json();
+        setScores(data.scores || []);
+      }
+    } catch (err) {
+      console.error("Error fetching scores:", err);
+    }
+  };
+
   useEffect(() => {
     const supabase = createClient();
     supabase.auth.getUser().then(({ data: { user: currentUser } }) => {
@@ -119,6 +136,7 @@ export default function DashboardPage() {
           .single()
           .then(({ data: prof }) => {
             setProfile(prof || { role: "subscriber", charity_contribution_percentage: 10.00 });
+            fetchScores();
             
             // Check query params for checkout=success
             const searchParams = new URLSearchParams(window.location.search);
@@ -246,23 +264,131 @@ export default function DashboardPage() {
   };
 
   // Add round logic
-  const handleAddScoreSubmit = (e) => {
+  const handleAddScoreSubmit = async (e) => {
     e.preventDefault();
-    if (!newCourse || !newStrokes) return;
-    const strokesNum = parseInt(newStrokes, 10);
-    const diffVal = parseFloat(((strokesNum - 72) * 1.13).toFixed(1));
-    const newEntry = {
-      id: (scores.length + 1).toString(),
-      course: newCourse,
-      date: newDate,
-      strokes: strokesNum,
-      net: strokesNum > 72 ? `Net +${strokesNum - 72}` : `Net -${72 - strokesNum}`,
-      diff: diffVal
-    };
-    setScores([newEntry, ...scores]);
-    setNewCourse("");
-    setNewStrokes("");
-    setShowAddScoreModal(false);
+    setAddErrorMessage("");
+    setAddDuplicateScoreId(null);
+
+    const scoreVal = parseInt(scoreValue, 10);
+    if (isNaN(scoreVal) || scoreVal < 1 || scoreVal > 45) {
+      setAddErrorMessage("Stableford score must be strictly between 1 and 45.");
+      return;
+    }
+
+    if (!scoreDate) {
+      setAddErrorMessage("Please select a date.");
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/scores", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scoreValue: scoreVal, scoreDate })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        if (data.error === "duplicate_date") {
+          setAddErrorMessage(data.message);
+          setAddDuplicateScoreId(data.existingScoreId);
+        } else {
+          setAddErrorMessage(data.message || data.error || "Failed to add score.");
+        }
+        return;
+      }
+
+      setScoreValue("");
+      setShowAddScoreModal(false);
+      fetchScores();
+    } catch (err) {
+      console.error("Error adding score:", err);
+      setAddErrorMessage("Server communication failed.");
+    }
+  };
+
+  // Edit round logic
+  const handleEditScoreSubmit = async (e) => {
+    e.preventDefault();
+    setEditErrorMessage("");
+    setEditDuplicateScoreId(null);
+
+    if (!editingScore) return;
+
+    const scoreVal = parseInt(editScoreValue, 10);
+    if (isNaN(scoreVal) || scoreVal < 1 || scoreVal > 45) {
+      setEditErrorMessage("Stableford score must be strictly between 1 and 45.");
+      return;
+    }
+
+    if (!editScoreDate) {
+      setEditErrorMessage("Please select a date.");
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/scores", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: editingScore.id, scoreValue: scoreVal, scoreDate: editScoreDate })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        if (data.error === "duplicate_date") {
+          setEditErrorMessage(data.message);
+          setEditDuplicateScoreId(data.existingScoreId);
+        } else {
+          setEditErrorMessage(data.message || data.error || "Failed to update score.");
+        }
+        return;
+      }
+
+      setEditingScore(null);
+      setEditScoreValue("");
+      setEditScoreDate("");
+      setShowEditScoreModal(false);
+      fetchScores();
+    } catch (err) {
+      console.error("Error updating score:", err);
+      setEditErrorMessage("Server communication failed.");
+    }
+  };
+
+  // Delete round logic
+  const handleDeleteScore = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this score?")) return;
+
+    try {
+      const response = await fetch(`/api/scores?id=${id}`, {
+        method: "DELETE"
+      });
+
+      if (response.ok) {
+        fetchScores();
+        if (editingScore?.id === id) {
+          setShowEditScoreModal(false);
+          setEditingScore(null);
+        }
+      } else {
+        const data = await response.json();
+        alert(data.message || "Failed to delete score.");
+      }
+    } catch (err) {
+      console.error("Error deleting score:", err);
+      alert("Server communication failed.");
+    }
+  };
+
+  const openEditModal = (scoreObj) => {
+    setEditingScore(scoreObj);
+    setEditScoreValue(scoreObj.score_value.toString());
+    setEditScoreDate(scoreObj.score_date);
+    setEditErrorMessage("");
+    setEditDuplicateScoreId(null);
+    setShowEditScoreModal(true);
   };
 
   // Run SQL Query simulation
@@ -755,10 +881,16 @@ export default function DashboardPage() {
                     <Table size={18} className="text-[#3ecf8e]" />
                     Table Editor: <span className="text-zinc-400 font-mono text-[16px] bg-[#111] px-2 py-0.5 rounded border border-[#222]">public.scores</span>
                   </h1>
-                  <p className="text-[12.5px] text-zinc-500 mt-1">Log rounds, check strokes net scores, and recalculate WHS differentials.</p>
+                  <p className="text-[12.5px] text-zinc-500 mt-1">Log rounds, check Stableford scores, and manage your rolling 5-score limit.</p>
                 </div>
                 <button 
-                  onClick={() => setShowAddScoreModal(true)}
+                  onClick={() => {
+                    setAddErrorMessage("");
+                    setAddDuplicateScoreId(null);
+                    setScoreValue("");
+                    setScoreDate("2026-06-20");
+                    setShowAddScoreModal(true);
+                  }}
                   className="bg-[#3ecf8e] text-black hover:bg-[#32b37a] text-[12px] font-bold h-8 px-3 rounded flex items-center gap-1.5 transition-all"
                 >
                   <Plus size={13} strokeWidth={2.5} /> Log Round
@@ -777,7 +909,7 @@ export default function DashboardPage() {
                     <button className="hover:text-white">Columns</button>
                   </div>
                   <div>
-                    <span>{scores.length} rows</span>
+                    <span>{scores.length} / 5 rows</span>
                   </div>
                 </div>
 
@@ -788,25 +920,44 @@ export default function DashboardPage() {
                       <tr className="border-b border-[#222] bg-[#161616] text-[11px] font-bold uppercase tracking-wider text-zinc-500">
                         <th className="px-4 py-2 border-r border-[#222] w-[40px] text-center bg-[#111]">#</th>
                         <th className="px-5 py-2.5 border-r border-[#222]">id [uuid]</th>
-                        <th className="px-5 py-2.5 border-r border-[#222]">course_name [text]</th>
-                        <th className="px-5 py-2.5 border-r border-[#222]">play_date [date]</th>
-                        <th className="px-5 py-2.5 border-r border-[#222]">strokes [int4]</th>
-                        <th className="px-5 py-2.5 border-r border-[#222]">net_score [text]</th>
-                        <th className="px-5 py-2.5">whs_diff [numeric]</th>
+                        <th className="px-5 py-2.5 border-r border-[#222]">stableford_score [int4]</th>
+                        <th className="px-5 py-2.5 border-r border-[#222]">score_date [date]</th>
+                        <th className="px-5 py-2.5 border-r border-[#222]">created_at [timestamptz]</th>
+                        <th className="px-5 py-2.5">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#222] text-zinc-300">
-                      {scores.map((s, index) => (
-                        <tr key={s.id} className="hover:bg-[#1e1e1e] transition-colors group">
-                          <td className="px-4 py-2 border-r border-[#222] text-center bg-[#111] text-zinc-600 font-sans">{index + 1}</td>
-                          <td className="px-5 py-2.5 border-r border-[#222] text-[#3ecf8e] truncate max-w-[120px]">{s.id}</td>
-                          <td className="px-5 py-2.5 border-r border-[#222] font-sans font-bold text-white">{s.course}</td>
-                          <td className="px-5 py-2.5 border-r border-[#222] text-zinc-400">{s.date}</td>
-                          <td className="px-5 py-2.5 border-r border-[#222] text-zinc-200 font-bold">{s.strokes}</td>
-                          <td className="px-5 py-2.5 border-r border-[#222] text-emerald-400 font-semibold font-sans">{s.net}</td>
-                          <td className="px-5 py-2.5 text-zinc-500">{s.diff}</td>
+                      {scores.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="text-center py-12 text-zinc-500 italic font-sans text-[13px]">
+                            No golf rounds logged yet. Click &quot;Log Round&quot; above to add your first Stableford score (maximum 5 stored rows).
+                          </td>
                         </tr>
-                      ))}
+                      ) : (
+                        scores.map((s, index) => (
+                          <tr key={s.id} className="hover:bg-[#1e1e1e] transition-colors group">
+                            <td className="px-4 py-2 border-r border-[#222] text-center bg-[#111] text-zinc-600 font-sans">{index + 1}</td>
+                            <td className="px-5 py-2.5 border-r border-[#222] text-[#3ecf8e] truncate max-w-[120px]" title={s.id}>{s.id}</td>
+                            <td className="px-5 py-2.5 border-r border-[#222] text-white font-bold text-[14px]">{s.score_value}</td>
+                            <td className="px-5 py-2.5 border-r border-[#222] text-zinc-400 font-sans">{s.score_date}</td>
+                            <td className="px-5 py-2.5 border-r border-[#222] text-zinc-500 text-[11.5px] font-sans">{new Date(s.created_at).toLocaleString()}</td>
+                            <td className="px-5 py-2.5 flex items-center gap-2">
+                              <button
+                                onClick={() => openEditModal(s)}
+                                className="text-[11px] font-bold text-[#3ecf8e] hover:text-white bg-[#3ecf8e]/10 border border-[#3ecf8e]/20 px-2.5 py-1 rounded transition-all hover:bg-[#3ecf8e]/20"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => handleDeleteScore(s.id)}
+                                className="text-[11px] font-bold text-red-400 hover:text-white bg-red-500/10 border border-red-500/20 px-2.5 py-1 rounded transition-all hover:bg-red-500/20"
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -814,50 +965,88 @@ export default function DashboardPage() {
 
               {/* Add Round modal popup */}
               {showAddScoreModal && (
-                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                   <div className="bg-[#141414] border border-[#2e2e2e] rounded-xl max-w-[400px] w-full p-6 space-y-4 animate-scaleUp">
-                    <h3 className="text-[16px] font-bold text-white">Log Golf Round</h3>
-                    <p className="text-[12px] text-zinc-500">Insert a new row into database table public.scores</p>
-                    
-                    <form onSubmit={handleAddScoreSubmit} className="space-y-3">
-                      <div className="space-y-1">
-                        <label className="text-[11.5px] font-medium text-zinc-400">Course Name</label>
-                        <input
-                          type="text"
-                          required
-                          placeholder="Augusta National"
-                          value={newCourse}
-                          onChange={(e) => setNewCourse(e.target.value)}
-                          className="w-full h-9 px-3 bg-[#111] border border-[#2e2e2e] rounded text-[13px] text-white focus:outline-none focus:border-[#3ecf8e]"
-                        />
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h3 className="text-[16px] font-bold text-white">Log Golf Round</h3>
+                        <p className="text-[12px] text-zinc-500">Insert a new Stableford score row.</p>
                       </div>
+                      <button 
+                        onClick={() => setShowAddScoreModal(false)}
+                        className="text-zinc-500 hover:text-white text-[20px] font-bold leading-none"
+                      >
+                        &times;
+                      </button>
+                    </div>
+                    
+                    {addErrorMessage && (
+                      <div className="p-3.5 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-[12.5px] leading-relaxed space-y-2">
+                        <p className="font-semibold">{addErrorMessage}</p>
+                        {addDuplicateScoreId && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const existing = scores.find(s => s.id === addDuplicateScoreId);
+                              if (existing) {
+                                setShowAddScoreModal(false);
+                                openEditModal(existing);
+                              }
+                            }}
+                            className="w-full py-1.5 bg-zinc-800 hover:bg-zinc-700 text-white rounded text-[11px] font-bold transition-all text-center"
+                          >
+                            Edit Existing Entry for this Date
+                          </button>
+                        )}
+                      </div>
+                    )}
 
-                      <div className="space-y-1">
-                        <label className="text-[11.5px] font-medium text-zinc-400">Strokes Played</label>
+                    <form onSubmit={handleAddScoreSubmit} className="space-y-4">
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between items-center">
+                          <label className="text-[11.5px] font-medium text-zinc-400">Stableford Score</label>
+                          {scoreValue && (
+                            parseInt(scoreValue, 10) >= 1 && parseInt(scoreValue, 10) <= 45 
+                              ? <span className="text-emerald-400 text-[11px] font-medium">✓ Valid (1-45)</span> 
+                              : <span className="text-red-400 text-[11px] font-medium">✗ Must be 1 to 45</span>
+                          )}
+                        </div>
                         <input
                           type="number"
                           required
-                          min="30"
-                          max="150"
-                          placeholder="72"
-                          value={newStrokes}
-                          onChange={(e) => setNewStrokes(e.target.value)}
-                          className="w-full h-9 px-3 bg-[#111] border border-[#2e2e2e] rounded text-[13px] text-white focus:outline-none focus:border-[#3ecf8e]"
+                          min="1"
+                          max="45"
+                          placeholder="Stableford score (e.g. 38)"
+                          value={scoreValue}
+                          onChange={(e) => {
+                            setScoreValue(e.target.value);
+                            setAddErrorMessage("");
+                            setAddDuplicateScoreId(null);
+                          }}
+                          className="w-full h-9 px-3 bg-[#111] border border-[#2e2e2e] rounded text-[13px] text-white focus:outline-none focus:border-[#3ecf8e] font-sans"
                         />
                       </div>
 
-                      <div className="space-y-1">
+                      <div className="space-y-1.5">
                         <label className="text-[11.5px] font-medium text-zinc-400">Play Date</label>
                         <input
                           type="date"
                           required
-                          value={newDate}
-                          onChange={(e) => setNewDate(e.target.value)}
-                          className="w-full h-9 px-3 bg-[#111] border border-[#2e2e2e] rounded text-[13px] text-white focus:outline-none focus:border-[#3ecf8e]"
+                          value={scoreDate}
+                          onChange={(e) => {
+                            setScoreDate(e.target.value);
+                            setAddErrorMessage("");
+                            setAddDuplicateScoreId(null);
+                          }}
+                          className="w-full h-9 px-3 bg-[#111] border border-[#2e2e2e] rounded text-[13px] text-white focus:outline-none focus:border-[#3ecf8e] font-sans"
                         />
                       </div>
 
-                      <div className="flex gap-2.5 justify-end pt-3 text-[12.5px]">
+                      <div className="text-[11px] text-zinc-500 leading-relaxed bg-[#111] p-2.5 rounded border border-[#222]">
+                        <span className="font-bold text-zinc-400">Note:</span> CauseLoop self-trims to 5 scores max. If you log a 6th round, the oldest entry by date will be automatically removed.
+                      </div>
+
+                      <div className="flex gap-2.5 justify-end pt-2 text-[12.5px]">
                         <button
                           type="button"
                           onClick={() => setShowAddScoreModal(false)}
@@ -870,6 +1059,111 @@ export default function DashboardPage() {
                           className="px-4 py-1.5 bg-[#3ecf8e] text-black hover:bg-[#32b37a] font-bold rounded"
                         >
                           Insert Row
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              {/* Edit Round modal popup */}
+              {showEditScoreModal && (
+                <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                  <div className="bg-[#141414] border border-[#2e2e2e] rounded-xl max-w-[400px] w-full p-6 space-y-4 animate-scaleUp">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h3 className="text-[16px] font-bold text-white">Edit Golf Round</h3>
+                        <p className="text-[12px] text-zinc-500">Modify details for this entry (enforced user ownership).</p>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          setShowEditScoreModal(false);
+                          setEditingScore(null);
+                        }}
+                        className="text-zinc-500 hover:text-white text-[20px] font-bold leading-none"
+                      >
+                        &times;
+                      </button>
+                    </div>
+
+                    {editErrorMessage && (
+                      <div className="p-3.5 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-[12.5px] leading-relaxed space-y-2">
+                        <p className="font-semibold">{editErrorMessage}</p>
+                        {editDuplicateScoreId && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const existing = scores.find(s => s.id === editDuplicateScoreId);
+                              if (existing) {
+                                setShowEditScoreModal(false);
+                                openEditModal(existing);
+                              }
+                            }}
+                            className="w-full py-1.5 bg-zinc-800 hover:bg-zinc-700 text-white rounded text-[11px] font-bold transition-all text-center"
+                          >
+                            Edit Existing Entry for this Date
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    <form onSubmit={handleEditScoreSubmit} className="space-y-4">
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between items-center">
+                          <label className="text-[11.5px] font-medium text-zinc-400">Stableford Score</label>
+                          {editScoreValue && (
+                            parseInt(editScoreValue, 10) >= 1 && parseInt(editScoreValue, 10) <= 45 
+                              ? <span className="text-emerald-400 text-[11px] font-medium">✓ Valid (1-45)</span> 
+                              : <span className="text-red-400 text-[11px] font-medium">✗ Must be 1 to 45</span>
+                          )}
+                        </div>
+                        <input
+                          type="number"
+                          required
+                          min="1"
+                          max="45"
+                          placeholder="Stableford score (e.g. 38)"
+                          value={editScoreValue}
+                          onChange={(e) => {
+                            setEditScoreValue(e.target.value);
+                            setEditErrorMessage("");
+                            setEditDuplicateScoreId(null);
+                          }}
+                          className="w-full h-9 px-3 bg-[#111] border border-[#2e2e2e] rounded text-[13px] text-white focus:outline-none focus:border-[#3ecf8e] font-sans"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[11.5px] font-medium text-zinc-400">Play Date</label>
+                        <input
+                          type="date"
+                          required
+                          value={editScoreDate}
+                          onChange={(e) => {
+                            setEditScoreDate(e.target.value);
+                            setEditErrorMessage("");
+                            setEditDuplicateScoreId(null);
+                          }}
+                          className="w-full h-9 px-3 bg-[#111] border border-[#2e2e2e] rounded text-[13px] text-white focus:outline-none focus:border-[#3ecf8e] font-sans"
+                        />
+                      </div>
+
+                      <div className="flex gap-2.5 justify-end pt-2 text-[12.5px]">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowEditScoreModal(false);
+                            setEditingScore(null);
+                          }}
+                          className="px-4 py-1.5 border border-[#2e2e2e] rounded text-zinc-400 hover:text-white"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          className="px-4 py-1.5 bg-[#3ecf8e] text-black hover:bg-[#32b37a] font-bold rounded"
+                        >
+                          Save Changes
                         </button>
                       </div>
                     </form>

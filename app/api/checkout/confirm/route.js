@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getStripeServer } from "@/lib/stripe";
-import { createServerClient, createAdminClient } from "@/lib/supabase/server";
+import { createServerClient, createAdminClient, ensureUserProfile } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +20,9 @@ export async function GET(request) {
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    // Self-heal user profile if it doesn't exist
+    await ensureUserProfile(user);
 
     const stripe = getStripeServer();
     const session = await stripe.checkout.sessions.retrieve(sessionId);
