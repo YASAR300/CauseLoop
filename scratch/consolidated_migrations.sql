@@ -11,22 +11,43 @@
 -- ENUMS
 -- --------------------------------------------------------
 
-CREATE TYPE user_role       AS ENUM ('visitor', 'subscriber', 'admin');
-CREATE TYPE plan_type       AS ENUM ('monthly', 'yearly');
-CREATE TYPE sub_status      AS ENUM ('active', 'inactive', 'cancelled', 'lapsed');
-CREATE TYPE draw_type       AS ENUM ('three_match', 'four_match', 'five_match');
-CREATE TYPE logic_type      AS ENUM ('random', 'algorithmic');
-CREATE TYPE draw_status     AS ENUM ('draft', 'simulated', 'published');
-CREATE TYPE verify_status   AS ENUM ('pending', 'approved', 'rejected');
-CREATE TYPE payment_status  AS ENUM ('pending', 'paid');
-CREATE TYPE notif_status    AS ENUM ('sent', 'failed', 'pending');
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'user_role') THEN
+        CREATE TYPE user_role AS ENUM ('visitor', 'subscriber', 'admin');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'plan_type') THEN
+        CREATE TYPE plan_type AS ENUM ('monthly', 'yearly');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'sub_status') THEN
+        CREATE TYPE sub_status AS ENUM ('active', 'inactive', 'cancelled', 'lapsed');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'draw_type') THEN
+        CREATE TYPE draw_type AS ENUM ('three_match', 'four_match', 'five_match');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'logic_type') THEN
+        CREATE TYPE logic_type AS ENUM ('random', 'algorithmic');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'draw_status') THEN
+        CREATE TYPE draw_status AS ENUM ('draft', 'simulated', 'published');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'verify_status') THEN
+        CREATE TYPE verify_status AS ENUM ('pending', 'approved', 'rejected');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'payment_status') THEN
+        CREATE TYPE payment_status AS ENUM ('pending', 'paid');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'notif_status') THEN
+        CREATE TYPE notif_status AS ENUM ('sent', 'failed', 'pending');
+    END IF;
+END$$;
 
 -- --------------------------------------------------------
 -- CHARITIES
 -- Must be created before profiles (FK dependency)
 -- --------------------------------------------------------
 
-CREATE TABLE charities (
+CREATE TABLE IF NOT EXISTS charities (
   id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   name              TEXT        NOT NULL,
   description       TEXT,
@@ -41,7 +62,7 @@ CREATE TABLE charities (
 -- PROFILES (1-to-1 with auth.users)
 -- --------------------------------------------------------
 
-CREATE TABLE profiles (
+CREATE TABLE IF NOT EXISTS profiles (
   id                            UUID        PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   role                          user_role   NOT NULL DEFAULT 'visitor',
   full_name                     TEXT,
@@ -57,7 +78,7 @@ CREATE TABLE profiles (
 -- SUBSCRIPTIONS
 -- --------------------------------------------------------
 
-CREATE TABLE subscriptions (
+CREATE TABLE IF NOT EXISTS subscriptions (
   id                     UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id                UUID        NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   plan_type              plan_type   NOT NULL,
@@ -74,7 +95,7 @@ CREATE TABLE subscriptions (
 -- SCORES
 -- --------------------------------------------------------
 
-CREATE TABLE scores (
+CREATE TABLE IF NOT EXISTS scores (
   id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id     UUID        NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   score_value INTEGER     NOT NULL,
@@ -89,7 +110,7 @@ CREATE TABLE scores (
 -- DRAWS
 -- --------------------------------------------------------
 
-CREATE TABLE draws (
+CREATE TABLE IF NOT EXISTS draws (
   id                    UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
   month                 SMALLINT     NOT NULL CHECK (month BETWEEN 1 AND 12),
   year                  SMALLINT     NOT NULL,
@@ -109,7 +130,7 @@ CREATE TABLE draws (
 -- DRAW ENTRIES
 -- --------------------------------------------------------
 
-CREATE TABLE draw_entries (
+CREATE TABLE IF NOT EXISTS draw_entries (
   id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
   draw_id         UUID         NOT NULL REFERENCES draws(id) ON DELETE CASCADE,
   user_id         UUID         NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
@@ -125,7 +146,7 @@ CREATE TABLE draw_entries (
 -- WINNERS
 -- --------------------------------------------------------
 
-CREATE TABLE winners (
+CREATE TABLE IF NOT EXISTS winners (
   id                  UUID           PRIMARY KEY DEFAULT gen_random_uuid(),
   draw_id             UUID           NOT NULL REFERENCES draws(id) ON DELETE CASCADE,
   user_id             UUID           NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
@@ -140,7 +161,7 @@ CREATE TABLE winners (
 -- NOTIFICATIONS LOG
 -- --------------------------------------------------------
 
-CREATE TABLE notifications_log (
+CREATE TABLE IF NOT EXISTS notifications_log (
   id        UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id   UUID         NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   type      TEXT         NOT NULL,
@@ -161,22 +182,27 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS trg_profiles_updated_at ON profiles;
 CREATE TRIGGER trg_profiles_updated_at
   BEFORE UPDATE ON profiles
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS trg_subscriptions_updated_at ON subscriptions;
 CREATE TRIGGER trg_subscriptions_updated_at
   BEFORE UPDATE ON subscriptions
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS trg_charities_updated_at ON charities;
 CREATE TRIGGER trg_charities_updated_at
   BEFORE UPDATE ON charities
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS trg_draws_updated_at ON draws;
 CREATE TRIGGER trg_draws_updated_at
   BEFORE UPDATE ON draws
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS trg_winners_updated_at ON winners;
 CREATE TRIGGER trg_winners_updated_at
   BEFORE UPDATE ON winners
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -199,6 +225,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION handle_new_user();
@@ -248,23 +275,27 @@ ALTER TABLE notifications_log ENABLE ROW LEVEL SECURITY;
 -- --------------------------------------------------------
 
 -- Users can read their own profile
+DROP POLICY IF EXISTS "profiles: own select" ON profiles;
 CREATE POLICY "profiles: own select"
   ON profiles FOR SELECT
   USING (id = auth.uid() OR is_admin());
 
 -- Users can insert their own profile (triggered by handle_new_user,
 -- but also allows manual calls)
+DROP POLICY IF EXISTS "profiles: own insert" ON profiles;
 CREATE POLICY "profiles: own insert"
   ON profiles FOR INSERT
   WITH CHECK (id = auth.uid());
 
 -- Users can update their own profile
+DROP POLICY IF EXISTS "profiles: own update" ON profiles;
 CREATE POLICY "profiles: own update"
   ON profiles FOR UPDATE
   USING (id = auth.uid())
   WITH CHECK (id = auth.uid());
 
 -- Only admins can delete profiles
+DROP POLICY IF EXISTS "profiles: admin delete" ON profiles;
 CREATE POLICY "profiles: admin delete"
   ON profiles FOR DELETE
   USING (is_admin());
@@ -274,19 +305,23 @@ CREATE POLICY "profiles: admin delete"
 -- --------------------------------------------------------
 
 -- Anyone authenticated can read charities
+DROP POLICY IF EXISTS "charities: authenticated select" ON charities;
 CREATE POLICY "charities: authenticated select"
   ON charities FOR SELECT
   USING (auth.uid() IS NOT NULL);
 
 -- Only admins can insert/update/delete charities
+DROP POLICY IF EXISTS "charities: admin insert" ON charities;
 CREATE POLICY "charities: admin insert"
   ON charities FOR INSERT
   WITH CHECK (is_admin());
 
+DROP POLICY IF EXISTS "charities: admin update" ON charities;
 CREATE POLICY "charities: admin update"
   ON charities FOR UPDATE
   USING (is_admin());
 
+DROP POLICY IF EXISTS "charities: admin delete" ON charities;
 CREATE POLICY "charities: admin delete"
   ON charities FOR DELETE
   USING (is_admin());
@@ -295,19 +330,23 @@ CREATE POLICY "charities: admin delete"
 -- SUBSCRIPTIONS POLICIES
 -- --------------------------------------------------------
 
+DROP POLICY IF EXISTS "subscriptions: own select" ON subscriptions;
 CREATE POLICY "subscriptions: own select"
   ON subscriptions FOR SELECT
   USING (user_id = auth.uid() OR is_admin());
 
+DROP POLICY IF EXISTS "subscriptions: own insert" ON subscriptions;
 CREATE POLICY "subscriptions: own insert"
   ON subscriptions FOR INSERT
   WITH CHECK (user_id = auth.uid());
 
+DROP POLICY IF EXISTS "subscriptions: own update" ON subscriptions;
 CREATE POLICY "subscriptions: own update"
   ON subscriptions FOR UPDATE
   USING (user_id = auth.uid() OR is_admin())
   WITH CHECK (user_id = auth.uid() OR is_admin());
 
+DROP POLICY IF EXISTS "subscriptions: admin delete" ON subscriptions;
 CREATE POLICY "subscriptions: admin delete"
   ON subscriptions FOR DELETE
   USING (is_admin());
@@ -316,19 +355,23 @@ CREATE POLICY "subscriptions: admin delete"
 -- SCORES POLICIES
 -- --------------------------------------------------------
 
+DROP POLICY IF EXISTS "scores: own select" ON scores;
 CREATE POLICY "scores: own select"
   ON scores FOR SELECT
   USING (user_id = auth.uid() OR is_admin());
 
+DROP POLICY IF EXISTS "scores: own insert" ON scores;
 CREATE POLICY "scores: own insert"
   ON scores FOR INSERT
   WITH CHECK (user_id = auth.uid());
 
+DROP POLICY IF EXISTS "scores: own update" ON scores;
 CREATE POLICY "scores: own update"
   ON scores FOR UPDATE
   USING (user_id = auth.uid())
   WITH CHECK (user_id = auth.uid());
 
+DROP POLICY IF EXISTS "scores: admin delete" ON scores;
 CREATE POLICY "scores: admin delete"
   ON scores FOR DELETE
   USING (is_admin());
@@ -338,6 +381,7 @@ CREATE POLICY "scores: admin delete"
 -- --------------------------------------------------------
 
 -- All authenticated users can read published draws
+DROP POLICY IF EXISTS "draws: authenticated select" ON draws;
 CREATE POLICY "draws: authenticated select"
   ON draws FOR SELECT
   USING (
@@ -345,14 +389,17 @@ CREATE POLICY "draws: authenticated select"
     AND (status = 'published' OR is_admin())
   );
 
+DROP POLICY IF EXISTS "draws: admin insert" ON draws;
 CREATE POLICY "draws: admin insert"
   ON draws FOR INSERT
   WITH CHECK (is_admin());
 
+DROP POLICY IF EXISTS "draws: admin update" ON draws;
 CREATE POLICY "draws: admin update"
   ON draws FOR UPDATE
   USING (is_admin());
 
+DROP POLICY IF EXISTS "draws: admin delete" ON draws;
 CREATE POLICY "draws: admin delete"
   ON draws FOR DELETE
   USING (is_admin());
@@ -361,19 +408,23 @@ CREATE POLICY "draws: admin delete"
 -- DRAW_ENTRIES POLICIES
 -- --------------------------------------------------------
 
+DROP POLICY IF EXISTS "draw_entries: own select" ON draw_entries;
 CREATE POLICY "draw_entries: own select"
   ON draw_entries FOR SELECT
   USING (user_id = auth.uid() OR is_admin());
 
+DROP POLICY IF EXISTS "draw_entries: own insert" ON draw_entries;
 CREATE POLICY "draw_entries: own insert"
   ON draw_entries FOR INSERT
   WITH CHECK (user_id = auth.uid());
 
+DROP POLICY IF EXISTS "draw_entries: own update" ON draw_entries;
 CREATE POLICY "draw_entries: own update"
   ON draw_entries FOR UPDATE
   USING (user_id = auth.uid())
   WITH CHECK (user_id = auth.uid());
 
+DROP POLICY IF EXISTS "draw_entries: admin delete" ON draw_entries;
 CREATE POLICY "draw_entries: admin delete"
   ON draw_entries FOR DELETE
   USING (is_admin());
@@ -383,19 +434,23 @@ CREATE POLICY "draw_entries: admin delete"
 -- --------------------------------------------------------
 
 -- Winners can see their own win; admins see all
+DROP POLICY IF EXISTS "winners: own select" ON winners;
 CREATE POLICY "winners: own select"
   ON winners FOR SELECT
   USING (user_id = auth.uid() OR is_admin());
 
 -- Only admins manage winner records
+DROP POLICY IF EXISTS "winners: admin insert" ON winners;
 CREATE POLICY "winners: admin insert"
   ON winners FOR INSERT
   WITH CHECK (is_admin());
 
+DROP POLICY IF EXISTS "winners: admin update" ON winners;
 CREATE POLICY "winners: admin update"
   ON winners FOR UPDATE
   USING (is_admin());
 
+DROP POLICY IF EXISTS "winners: admin delete" ON winners;
 CREATE POLICY "winners: admin delete"
   ON winners FOR DELETE
   USING (is_admin());
@@ -405,19 +460,23 @@ CREATE POLICY "winners: admin delete"
 -- --------------------------------------------------------
 
 -- Users can see their own notification history
+DROP POLICY IF EXISTS "notifications_log: own select" ON notifications_log;
 CREATE POLICY "notifications_log: own select"
   ON notifications_log FOR SELECT
   USING (user_id = auth.uid() OR is_admin());
 
 -- Only server-side (service role) or admin may insert
+DROP POLICY IF EXISTS "notifications_log: admin insert" ON notifications_log;
 CREATE POLICY "notifications_log: admin insert"
   ON notifications_log FOR INSERT
   WITH CHECK (is_admin());
 
+DROP POLICY IF EXISTS "notifications_log: admin update" ON notifications_log;
 CREATE POLICY "notifications_log: admin update"
   ON notifications_log FOR UPDATE
   USING (is_admin());
 
+DROP POLICY IF EXISTS "notifications_log: admin delete" ON notifications_log;
 CREATE POLICY "notifications_log: admin delete"
   ON notifications_log FOR DELETE
   USING (is_admin());
@@ -448,34 +507,34 @@ CREATE TABLE IF NOT EXISTS stripe_events (
 -- ============================================================
 
 -- Profiles
-CREATE INDEX idx_profiles_role        ON profiles(role);
-CREATE INDEX idx_profiles_charity_id  ON profiles(charity_id);
+CREATE INDEX IF NOT EXISTS idx_profiles_role        ON profiles(role);
+CREATE INDEX IF NOT EXISTS idx_profiles_charity_id  ON profiles(charity_id);
 
 -- Subscriptions
-CREATE INDEX idx_subscriptions_user_id ON subscriptions(user_id);
-CREATE INDEX idx_subscriptions_status  ON subscriptions(status);
-CREATE INDEX idx_subscriptions_stripe_customer ON subscriptions(stripe_customer_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_user_id ON subscriptions(user_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_status  ON subscriptions(status);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe_customer ON subscriptions(stripe_customer_id);
 
 -- Scores
-CREATE INDEX idx_scores_user_id    ON scores(user_id);
-CREATE INDEX idx_scores_score_date ON scores(score_date DESC);
+CREATE INDEX IF NOT EXISTS idx_scores_user_id    ON scores(user_id);
+CREATE INDEX IF NOT EXISTS idx_scores_score_date ON scores(score_date DESC);
 
 -- Draws
-CREATE INDEX idx_draws_status ON draws(status);
-CREATE INDEX idx_draws_year_month ON draws(year DESC, month DESC);
+CREATE INDEX IF NOT EXISTS idx_draws_status ON draws(status);
+CREATE INDEX IF NOT EXISTS idx_draws_year_month ON draws(year DESC, month DESC);
 
 -- Draw Entries
-CREATE INDEX idx_draw_entries_draw_id ON draw_entries(draw_id);
-CREATE INDEX idx_draw_entries_user_id ON draw_entries(user_id);
+CREATE INDEX IF NOT EXISTS idx_draw_entries_draw_id ON draw_entries(draw_id);
+CREATE INDEX IF NOT EXISTS idx_draw_entries_user_id ON draw_entries(user_id);
 
 -- Winners
-CREATE INDEX idx_winners_draw_id ON winners(draw_id);
-CREATE INDEX idx_winners_user_id ON winners(user_id);
-CREATE INDEX idx_winners_verification ON winners(verification_status);
+CREATE INDEX IF NOT EXISTS idx_winners_draw_id ON winners(draw_id);
+CREATE INDEX IF NOT EXISTS idx_winners_user_id ON winners(user_id);
+CREATE INDEX IF NOT EXISTS idx_winners_verification ON winners(verification_status);
 
 -- Notifications Log
-CREATE INDEX idx_notifications_user_id ON notifications_log(user_id);
-CREATE INDEX idx_notifications_status  ON notifications_log(status);
-CREATE INDEX idx_notifications_type    ON notifications_log(type);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_status  ON notifications_log(status);
+CREATE INDEX IF NOT EXISTS idx_notifications_type    ON notifications_log(type);
 
 

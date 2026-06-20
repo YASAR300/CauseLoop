@@ -7,22 +7,43 @@
 -- ENUMS
 -- --------------------------------------------------------
 
-CREATE TYPE user_role       AS ENUM ('visitor', 'subscriber', 'admin');
-CREATE TYPE plan_type       AS ENUM ('monthly', 'yearly');
-CREATE TYPE sub_status      AS ENUM ('active', 'inactive', 'cancelled', 'lapsed');
-CREATE TYPE draw_type       AS ENUM ('three_match', 'four_match', 'five_match');
-CREATE TYPE logic_type      AS ENUM ('random', 'algorithmic');
-CREATE TYPE draw_status     AS ENUM ('draft', 'simulated', 'published');
-CREATE TYPE verify_status   AS ENUM ('pending', 'approved', 'rejected');
-CREATE TYPE payment_status  AS ENUM ('pending', 'paid');
-CREATE TYPE notif_status    AS ENUM ('sent', 'failed', 'pending');
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'user_role') THEN
+        CREATE TYPE user_role AS ENUM ('visitor', 'subscriber', 'admin');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'plan_type') THEN
+        CREATE TYPE plan_type AS ENUM ('monthly', 'yearly');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'sub_status') THEN
+        CREATE TYPE sub_status AS ENUM ('active', 'inactive', 'cancelled', 'lapsed');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'draw_type') THEN
+        CREATE TYPE draw_type AS ENUM ('three_match', 'four_match', 'five_match');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'logic_type') THEN
+        CREATE TYPE logic_type AS ENUM ('random', 'algorithmic');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'draw_status') THEN
+        CREATE TYPE draw_status AS ENUM ('draft', 'simulated', 'published');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'verify_status') THEN
+        CREATE TYPE verify_status AS ENUM ('pending', 'approved', 'rejected');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'payment_status') THEN
+        CREATE TYPE payment_status AS ENUM ('pending', 'paid');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'notif_status') THEN
+        CREATE TYPE notif_status AS ENUM ('sent', 'failed', 'pending');
+    END IF;
+END$$;
 
 -- --------------------------------------------------------
 -- CHARITIES
 -- Must be created before profiles (FK dependency)
 -- --------------------------------------------------------
 
-CREATE TABLE charities (
+CREATE TABLE IF NOT EXISTS charities (
   id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   name              TEXT        NOT NULL,
   description       TEXT,
@@ -37,7 +58,7 @@ CREATE TABLE charities (
 -- PROFILES (1-to-1 with auth.users)
 -- --------------------------------------------------------
 
-CREATE TABLE profiles (
+CREATE TABLE IF NOT EXISTS profiles (
   id                            UUID        PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   role                          user_role   NOT NULL DEFAULT 'visitor',
   full_name                     TEXT,
@@ -53,7 +74,7 @@ CREATE TABLE profiles (
 -- SUBSCRIPTIONS
 -- --------------------------------------------------------
 
-CREATE TABLE subscriptions (
+CREATE TABLE IF NOT EXISTS subscriptions (
   id                     UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id                UUID        NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   plan_type              plan_type   NOT NULL,
@@ -70,7 +91,7 @@ CREATE TABLE subscriptions (
 -- SCORES
 -- --------------------------------------------------------
 
-CREATE TABLE scores (
+CREATE TABLE IF NOT EXISTS scores (
   id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id     UUID        NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   score_value INTEGER     NOT NULL,
@@ -85,7 +106,7 @@ CREATE TABLE scores (
 -- DRAWS
 -- --------------------------------------------------------
 
-CREATE TABLE draws (
+CREATE TABLE IF NOT EXISTS draws (
   id                    UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
   month                 SMALLINT     NOT NULL CHECK (month BETWEEN 1 AND 12),
   year                  SMALLINT     NOT NULL,
@@ -105,7 +126,7 @@ CREATE TABLE draws (
 -- DRAW ENTRIES
 -- --------------------------------------------------------
 
-CREATE TABLE draw_entries (
+CREATE TABLE IF NOT EXISTS draw_entries (
   id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
   draw_id         UUID         NOT NULL REFERENCES draws(id) ON DELETE CASCADE,
   user_id         UUID         NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
@@ -121,7 +142,7 @@ CREATE TABLE draw_entries (
 -- WINNERS
 -- --------------------------------------------------------
 
-CREATE TABLE winners (
+CREATE TABLE IF NOT EXISTS winners (
   id                  UUID           PRIMARY KEY DEFAULT gen_random_uuid(),
   draw_id             UUID           NOT NULL REFERENCES draws(id) ON DELETE CASCADE,
   user_id             UUID           NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
@@ -136,7 +157,7 @@ CREATE TABLE winners (
 -- NOTIFICATIONS LOG
 -- --------------------------------------------------------
 
-CREATE TABLE notifications_log (
+CREATE TABLE IF NOT EXISTS notifications_log (
   id        UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id   UUID         NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   type      TEXT         NOT NULL,
@@ -157,22 +178,27 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS trg_profiles_updated_at ON profiles;
 CREATE TRIGGER trg_profiles_updated_at
   BEFORE UPDATE ON profiles
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS trg_subscriptions_updated_at ON subscriptions;
 CREATE TRIGGER trg_subscriptions_updated_at
   BEFORE UPDATE ON subscriptions
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS trg_charities_updated_at ON charities;
 CREATE TRIGGER trg_charities_updated_at
   BEFORE UPDATE ON charities
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS trg_draws_updated_at ON draws;
 CREATE TRIGGER trg_draws_updated_at
   BEFORE UPDATE ON draws
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS trg_winners_updated_at ON winners;
 CREATE TRIGGER trg_winners_updated_at
   BEFORE UPDATE ON winners
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -195,6 +221,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION handle_new_user();
