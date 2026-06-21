@@ -1,5 +1,12 @@
 import { createServerClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { v2 as cloudinary } from "cloudinary";
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
 
 export async function POST(request) {
   try {
@@ -73,44 +80,48 @@ export async function POST(request) {
     const timestamp = Date.now();
     const storagePath = `${winnerId}/${timestamp}_${sanitized}`;
 
-    // 8. Upload to Supabase Storage with timeout
+    // 8. Upload to Cloudinary with timeout
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    const uploadPromise = supabase.storage
-      .from("winner-proofs")
-      .upload(storagePath, buffer, {
-        contentType: file.type,
-        upsert: false
-      });
+    const uploadPromise = new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          folder: `winner-proofs/${winnerId}`,
+          public_id: `${timestamp}_${sanitized.split(".")[0]}`,
+          resource_type: "image",
+          upload_preset: process.env.CLOUDINARY_UPLOAD_PRESET || undefined
+        },
+        (error, result) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve(result);
+          }
+        }
+      );
+      uploadStream.end(buffer);
+    });
 
     const timeoutPromise = new Promise((_, reject) =>
       setTimeout(() => reject(new Error("Upload timeout")), 30000)
     );
 
-    const { data: uploadData, error: uploadError } = await Promise.race([
-      uploadPromise,
-      timeoutPromise
-    ]).catch((err) => {
-      if (err.message === "Upload timeout") {
-        return { error: { message: "Upload timed out. Please try again" } };
-      }
-      return { error: err };
-    });
-
-    if (uploadError) {
+    let uploadResult;
+    try {
+      uploadResult = await Promise.race([
+        uploadPromise,
+        timeoutPromise
+      ]);
+    } catch (err) {
+      console.error("[Cloudinary Upload Error]:", err);
       return NextResponse.json(
-        { error: "Upload failed. Please try again" },
+        { error: "Upload failed. Please try again", details: err.message || JSON.stringify(err) },
         { status: 500 }
       );
     }
 
-    // 9. Get public URL
-    const { data: urlData } = supabase.storage
-      .from("winner-proofs")
-      .getPublicUrl(storagePath);
-
-    const publicUrl = urlData.publicUrl;
+    const publicUrl = uploadResult.secure_url;
 
     // 10. Update winner record with proof URL
     const updatePayload = {
@@ -130,10 +141,12 @@ export async function POST(request) {
       .eq("id", winnerId);
 
     if (updateError) {
-      // Rollback: delete uploaded file
-      await supabase.storage.from("winner-proofs").remove([storagePath]);
+      // Rollback: delete uploaded file from Cloudinary
+      if (uploadResult?.public_id) {
+        await cloudinary.uploader.destroy(uploadResult.public_id).catch(err => console.error("Rollback destroy failed:", err));
+      }
       return NextResponse.json(
-        { error: "Upload failed. Please try again" },
+        { error: "Upload failed. Please try again", details: updateError.message },
         { status: 500 }
       );
     }
@@ -155,7 +168,7 @@ export async function POST(request) {
   } catch (error) {
     console.error("Proof upload error:", error);
     return NextResponse.json(
-      { error: "Server error" },
+      { error: "Server error", details: error.message || JSON.stringify(error) },
       { status: 500 }
     );
   }
