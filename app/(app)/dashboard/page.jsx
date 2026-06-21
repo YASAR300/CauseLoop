@@ -172,11 +172,52 @@ export default function DashboardPage() {
   const [claimVerificationFilter, setClaimVerificationFilter] = useState("all");
   const [claimPaymentFilter, setClaimPaymentFilter] = useState("all");
 
+  // Winner Verification and Proof States
+  const [uploadingProof, setUploadingProof] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const [adminProofModal, setAdminProofModal] = useState(null);
+  const [verifyingWinner, setVerifyingWinner] = useState(null);
+  const [rejectionReason, setRejectionReason] = useState("");
+  const [showRejectModal, setShowRejectModal] = useState(false);
+
   // Recharts Mounting Protection
   const [isMounted, setIsMounted] = useState(false);
   useEffect(() => {
     setIsMounted(true);
   }, []);
+
+  // Chart Data Helpers
+  const getChartUserData = () => {
+    if (!adminProfiles || adminProfiles.length === 0) return [];
+    const sorted = [...adminProfiles].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    let count = 0;
+    const groups = {};
+    sorted.forEach((p) => {
+      const date = new Date(p.created_at).toLocaleDateString("en-GB", {
+        day: "2-digit",
+        month: "short"
+      });
+      count++;
+      groups[date] = count;
+    });
+    return Object.entries(groups).map(([name, users]) => ({
+      name,
+      Users: users
+    }));
+  };
+
+  const getChartCharityData = () => {
+    if (!adminCharities || adminCharities.length === 0) return [];
+    return adminCharities.map((c) => {
+      const count = adminProfiles.filter(
+        (p) => p.charity_id === c.id && p.subscriptions?.some((s) => s.status === "active")
+      ).length;
+      return {
+        name: c.name.length > 12 ? c.name.substring(0, 10) + "..." : c.name,
+        Supporters: count
+      };
+    });
+  };
 
   // Toast Trigger
   const triggerToast = (msg, type = "success") => {
@@ -620,32 +661,59 @@ export default function DashboardPage() {
     }
   };
 
-  // User Action: Submit winner proof screenshot (base64 conversion)
-  const handleWinnerProofUpload = async (e, winnerId) => {
+  // User Action: Submit winner proof screenshot (FormData upload)
+  const handleProofUpload = async (e, winnerId) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      const base64Data = reader.result;
-      const supabase = createClient();
-      
-      const { error } = await supabase
-        .from("winners")
-        .update({
-          proof_image_url: base64Data,
-          verification_status: "pending"
-        })
-        .eq("id", winnerId);
+    setUploadError("");
+    setUploadingProof(true);
 
-      if (error) {
-        triggerToast(error.message, "error");
-      } else {
-        triggerToast("Proof screenshot uploaded successfully! Awaiting review.", "success");
-        fetchData();
+    const validTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+    if (!validTypes.includes(file.type)) {
+      triggerToast("Please upload an image file (JPEG, PNG, GIF, or WEBP)", "error");
+      setUploadingProof(false);
+      return;
+    }
+
+    if (file.size < 1024) {
+      triggerToast("File is too small to be a valid image", "error");
+      setUploadingProof(false);
+      return;
+    }
+
+    if (file.size > 5242880) { // 5MB
+      triggerToast("File size must not exceed 5MB", "error");
+      setUploadingProof(false);
+      return;
+    }
+
+    try {
+      const formData = new FormData();
+      formData.append("winnerId", winnerId);
+      formData.append("file", file);
+
+      const response = await fetch("/api/winners/proof-upload", {
+        method: "POST",
+        body: formData
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        triggerToast(data.error || "Upload failed. Please try again", "error");
+        return;
       }
-    };
-    reader.readAsDataURL(file);
+
+      triggerToast("Proof uploaded successfully! Awaiting admin verification.", "success");
+      fetchData();
+    } catch (err) {
+      console.error(err);
+      triggerToast("Server connection error", "error");
+    } finally {
+      setUploadingProof(false);
+      e.target.value = "";
+    }
   };
 
   // User Action: Save General Settings (Name, Charity, and Contribution Percentage)
@@ -882,43 +950,79 @@ export default function DashboardPage() {
     }
   };
 
-  // Admin User: Verify Winner Claim (Approve / Reject)
-  const handleAdminWinnerVerify = async (winnerId, status) => {
+  // Admin Action: Approve Winner Claim
+  const handleApproveWinner = async (winnerId) => {
+    if (!window.confirm("Approve this winner claim?")) return;
     try {
-      const res = await fetch("/api/admin/users", {
-        method: "PATCH",
+      const res = await fetch("/api/winners/verify", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "verify_winner", winnerId, verificationStatus: status })
+        body: JSON.stringify({ winnerId, action: "approve" })
       });
+      const data = await res.json();
       if (res.ok) {
-        triggerToast(`Claim verification updated to "${status}"`);
+        triggerToast("Winner claim approved successfully!");
         fetchAdminData();
+        fetchData();
       } else {
-        const d = await res.json();
-        triggerToast(d.error || "Failed to verify", "error");
+        triggerToast(data.error || "Failed to approve claim", "error");
       }
-    } catch (e) {
-      console.error(e);
+    } catch (err) {
+      console.error(err);
+      triggerToast("Server connection error", "error");
     }
   };
 
-  // Admin User: Complete Winner Payout
-  const handleAdminWinnerPay = async (winnerId) => {
+  // Admin Action: Reject Winner Claim
+  const handleRejectWinner = async (winnerId, reason) => {
+    const trimmedReason = reason.trim();
+    if (trimmedReason.length < 10) {
+      triggerToast("Rejection reason must be at least 10 characters", "error");
+      return;
+    }
     try {
-      const res = await fetch("/api/admin/users", {
-        method: "PATCH",
+      const res = await fetch("/api/winners/verify", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "verify_winner", winnerId, paymentStatus: "paid" })
+        body: JSON.stringify({ winnerId, action: "reject", rejectionReason: trimmedReason })
       });
+      const data = await res.json();
       if (res.ok) {
-        triggerToast("Payout marked as completed.");
+        triggerToast("Winner claim rejected successfully.");
+        setShowRejectModal(false);
+        setVerifyingWinner(null);
+        setRejectionReason("");
         fetchAdminData();
+        fetchData();
       } else {
-        const d = await res.json();
-        triggerToast(d.error || "Failed to update payout", "error");
+        triggerToast(data.error || "Failed to reject claim", "error");
       }
-    } catch (e) {
-      console.error(e);
+    } catch (err) {
+      console.error(err);
+      triggerToast("Server connection error", "error");
+    }
+  };
+
+  // Admin Action: Mark Payout as Paid
+  const handleAdminWinnerPay = async (winnerId) => {
+    if (!window.confirm("Mark this winner payout as paid?")) return;
+    try {
+      const res = await fetch("/api/winners/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ winnerId, action: "pay" })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        triggerToast("Payout marked as paid successfully.");
+        fetchAdminData();
+        fetchData();
+      } else {
+        triggerToast(data.error || "Failed to mark as paid", "error");
+      }
+    } catch (err) {
+      console.error(err);
+      triggerToast("Server connection error", "error");
     }
   };
 
@@ -2094,7 +2198,12 @@ export default function DashboardPage() {
                       <div key={w.id} className="px-5 py-4 flex flex-col sm:flex-row justify-between sm:items-center gap-4">
                         <div className="space-y-1.5">
                           <p className="text-[12.5px] font-semibold text-white">Draw {w.draws?.month}/{w.draws?.year}</p>
-                          <p className="text-[11px] text-zinc-500 capitalize">{w.draws?.draw_type?.replace("_", " ")}</p>
+                          <p className="text-[11px] text-zinc-500">
+                            {w.draws?.draw_type === "three_match" ? "3-Number Match" :
+                             w.draws?.draw_type === "four_match" ? "4-Number Match" :
+                             w.draws?.draw_type === "five_match" ? "5-Number Match (Jackpot)" :
+                             w.draws?.draw_type?.replace("_", " ")}
+                          </p>
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className={`text-[9.5px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md border ${
                               w.verification_status === "approved"
@@ -2109,13 +2218,18 @@ export default function DashboardPage() {
                                 : "bg-zinc-800 border-zinc-700/50 text-zinc-500"
                             }`}>{w.payment_status}</span>
                           </div>
+                          {w.verification_status === "rejected" && w.rejection_reason && (
+                            <p className="text-[11px] text-red-400 mt-1.5 font-sans bg-red-500/5 border border-red-500/10 p-2 rounded-lg leading-relaxed max-w-md">
+                              Rejection Reason: {w.rejection_reason}
+                            </p>
+                          )}
                         </div>
                         <div className="shrink-0">
                           {w.verification_status !== "approved" ? (
                             <label className="inline-flex items-center gap-1.5 px-3 h-7 bg-transparent border border-[#272727] hover:border-[#333] rounded-lg text-[11px] font-medium text-zinc-400 hover:text-white cursor-pointer transition-all">
                               <Upload size={10} />
                               {w.proof_image_url ? "Re-upload Proof" : "Upload Score Proof"}
-                              <input type="file" accept="image/*" className="hidden" onChange={(e) => handleWinnerProofUpload(e, w.id)} />
+                              <input type="file" accept="image/*" className="hidden" onChange={(e) => handleProofUpload(e, w.id)} />
                             </label>
                           ) : (
                             <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-400">
@@ -2323,627 +2437,964 @@ export default function DashboardPage() {
           )}
 
           {/* ============================================================ */}
-          {/* TAB 6: ADMIN SUITE PANEL                                     */}
+                {/* ============================================================ */}
+          {/* TAB 6A: ADMIN - USERS                                        */}
           {/* ============================================================ */}
-          {activeTab === "admin" && userRole === "admin" && (
+          {activeTab === "admin_users" && userRole === "admin" && (
             <div className="space-y-6 animate-fadeInUp">
-              
-              <div className="border-b border-[#222] pb-5 shrink-0">
+              <div className="border-b border-[#222] pb-5">
                 <h1 className="text-[20px] font-bold text-white tracking-tight flex items-center gap-2">
-                  <ShieldCheck size={20} className="text-emerald-400" />
-                  Admin Control Panel
+                  <Users size={20} className="text-emerald-400" />
+                  Admin: User Profiles
                 </h1>
-                <p className="text-[12.5px] text-zinc-500 mt-1">Configure draw logic, manage charities, view users, and check winner claim proofs.</p>
+                <p className="text-[12.5px] text-zinc-500 mt-1">Review registered golfers, edit roles, adjust scores, and manage subscription statuses.</p>
               </div>
 
-              {/* Admin Workspaces split */}
-              <div className="grid md:grid-cols-4 gap-4 items-start">
+              <div className="bg-[#141414] border border-[#222] rounded-lg p-6 space-y-4 shadow-xl">
+                <h3 className="text-[13px] font-bold text-white border-b border-[#222] pb-2">Registered Accounts List</h3>
                 
-                {/* Admin Submenu list */}
-                <div className="bg-[#141414] border border-[#222] rounded-lg p-4 space-y-1">
-                  {[
-                    { id: "users", label: "User Profiles", icon: Users },
-                    { id: "charities", label: "Charities List", icon: Heart },
-                    { id: "draws", label: "Simulate Drawings", icon: Trophy },
-                    { id: "claims", label: "Winner Claims", icon: Award },
-                    { id: "reports", label: "Reports & Analytics", icon: TrendingUp }
-                  ].map((sub) => {
-                    const SubIcon = sub.icon;
-                    return (
-                      <button
-                        key={sub.id}
-                        onClick={() => { setAdminTab(sub.id); setSimulationResults(null); }}
-                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded text-[12px] font-bold transition-all ${
-                          adminTab === sub.id
-                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                            : "text-zinc-400 hover:text-white hover:bg-zinc-900"
-                        }`}
-                      >
-                        <SubIcon size={13} />
-                        <span>{sub.label}</span>
-                      </button>
-                    );
-                  })}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-[12px] font-mono">
+                    <thead>
+                      <tr className="border-b border-[#222] text-zinc-500 font-extrabold uppercase text-[10px] tracking-wider bg-zinc-950/20">
+                        <th className="py-2.5 px-3">Email / Name</th>
+                        <th className="py-2.5 px-3">Role</th>
+                        <th className="py-2.5 px-3">Subscription</th>
+                        <th className="py-2.5 px-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#222] text-zinc-300 font-medium">
+                      {adminProfiles.map((p) => {
+                        const subRow = p.subscriptions?.[0];
+                        return (
+                          <tr key={p.id} className="hover:bg-zinc-950/20">
+                            <td className="py-3 px-3">
+                              <p className="text-white font-sans font-bold">{p.full_name || "Unnamed Golfer"}</p>
+                              <p className="text-[11px] text-zinc-500 font-mono">{p.id}</p>
+                            </td>
+                            <td className="py-3 px-3 capitalize font-sans">{p.role}</td>
+                            <td className="py-3 px-3">
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded capitalize font-sans ${
+                                subRow?.status === "active" ? "bg-emerald-500/10 text-emerald-400" : "bg-zinc-800 text-zinc-400"
+                              }`}>
+                                {subRow?.status || "inactive"}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-right space-x-2 font-sans">
+                              <button
+                                onClick={() => {
+                                  setSelectedUserScores(p);
+                                  setShowUserScoresModal(true);
+                                }}
+                                className="text-[11px] font-bold text-emerald-400 hover:text-white bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded"
+                              >
+                                Scores
+                              </button>
+                              <button
+                                onClick={() => handleAdminChangeRole(p.id, p.role)}
+                                className="text-[11px] font-bold text-zinc-400 hover:text-white bg-zinc-900 border border-[#2e2e33] px-2 py-1 rounded"
+                              >
+                                Role
+                              </button>
+                              <button
+                                onClick={() => handleAdminToggleSubscription(p.id, subRow?.status)}
+                                className="text-[11px] font-bold text-[#8644FF] hover:text-white bg-[#8644FF]/10 border border-[#8644FF]/20 px-2 py-1 rounded"
+                              >
+                                Subscription
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ============================================================ */}
+          {/* TAB 6B: ADMIN - CHARITIES                                    */}
+          {/* ============================================================ */}
+          {activeTab === "admin_charities" && userRole === "admin" && (
+            <div className="space-y-6 animate-fadeInUp">
+              <div className="border-b border-[#222] pb-5">
+                <h1 className="text-[20px] font-bold text-white tracking-tight flex items-center gap-2">
+                  <Heart size={20} className="text-[#3ecf8e]" />
+                  Admin: Charity Partners Manager
+                </h1>
+                <p className="text-[12.5px] text-zinc-500 mt-1">Add new charity causes, toggle Featured Spotlight status, and manage active partner details.</p>
+              </div>
+
+              <div className="bg-[#141414] border border-[#222] rounded-lg p-6 space-y-4 shadow-xl">
+                <div className="flex justify-between items-center border-b border-[#222] pb-3">
+                  <h3 className="text-[13px] font-bold text-white">Charity Partners List</h3>
+                  <button
+                    onClick={() => {
+                      setNewCharityName("");
+                      setNewCharityDesc("");
+                      setNewCharityImg("");
+                      setNewCharityFeatured(false);
+                      setShowAddCharityModal(true);
+                    }}
+                    className="h-8 px-3.5 bg-[#3ecf8e] text-black hover:bg-[#32b37a] text-[11.5px] font-bold rounded shadow-md transition-colors"
+                  >
+                    Add Charity Partner
+                  </button>
                 </div>
 
-                {/* Admin Content Details */}
-                <div className="md:col-span-3 space-y-4">
-                  
-                  {/* ADMIN SUB-TAB A: USER MANAGEMENT */}
-                  {adminTab === "users" && (
-                    <div className="bg-[#141414] border border-[#222] rounded-lg p-6 space-y-4 shadow-xl">
-                      <h3 className="text-[13px] font-bold text-white border-b border-[#222] pb-2">Registered Accounts List</h3>
-                      
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left text-[12px] font-mono">
-                          <thead>
-                            <tr className="border-b border-[#222] text-zinc-500 font-extrabold uppercase text-[10px] tracking-wider bg-zinc-950/20">
-                              <th className="py-2.5 px-3">Email / Name</th>
-                              <th className="py-2.5 px-3">Role</th>
-                              <th className="py-2.5 px-3">Subscription</th>
-                              <th className="py-2.5 px-3 text-right">Actions</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-[#222] text-zinc-300 font-medium">
-                            {adminProfiles.map((p) => {
-                              const subRow = p.subscriptions?.[0];
-                              return (
-                                <tr key={p.id} className="hover:bg-zinc-950/20">
-                                  <td className="py-3 px-3">
-                                    <p className="text-white font-sans font-bold">{p.full_name || "Unnamed Golfer"}</p>
-                                    <p className="text-[11px] text-zinc-500 font-mono">{p.id}</p>
-                                  </td>
-                                  <td className="py-3 px-3 capitalize font-sans">{p.role}</td>
-                                  <td className="py-3 px-3">
-                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded capitalize font-sans ${
-                                      subRow?.status === "active" ? "bg-emerald-500/10 text-emerald-400" : "bg-zinc-800 text-zinc-400"
-                                    }`}>
-                                      {subRow?.status || "inactive"}
-                                    </span>
-                                  </td>
-                                  <td className="py-3 px-3 text-right space-x-2 font-sans">
-                                    <button
-                                      onClick={() => {
-                                        setSelectedUserScores(p);
-                                        setShowUserScoresModal(true);
-                                      }}
-                                      className="text-[11px] font-bold text-emerald-400 hover:text-white bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded"
-                                    >
-                                      Scores
-                                    </button>
-                                    <button
-                                      onClick={() => handleAdminChangeRole(p.id, p.role)}
-                                      className="text-[11px] font-bold text-zinc-400 hover:text-white bg-zinc-900 border border-[#2e2e33] px-2 py-1 rounded"
-                                    >
-                                      Role
-                                    </button>
-                                    <button
-                                      onClick={() => handleAdminToggleSubscription(p.id, subRow?.status)}
-                                      className="text-[11px] font-bold text-[#8644FF] hover:text-white bg-[#8644FF]/10 border border-[#8644FF]/20 px-2 py-1 rounded"
-                                    >
-                                      Subscription
-                                    </button>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* ADMIN SUB-TAB B: CHARITIES CONFIG */}
-                  {adminTab === "charities" && (
-                    <div className="bg-[#141414] border border-[#222] rounded-lg p-6 space-y-4 shadow-xl">
-                      <div className="flex justify-between items-center border-b border-[#222] pb-2">
-                        <h3 className="text-[13px] font-bold text-white">Charity Partners List</h3>
-                        <button
-                          onClick={() => setShowAddCharityModal(true)}
-                          className="h-7 px-3 bg-emerald-500 hover:bg-emerald-400 text-black text-[11px] font-bold rounded flex items-center gap-1 transition-all"
-                        >
-                          <Plus size={11} strokeWidth={3} /> Add Partner
-                        </button>
-                      </div>
-
-                      <div className="divide-y divide-[#222] border border-[#222] rounded-lg overflow-hidden">
-                        {adminCharities.map((c) => (
-                          <div key={c.id} className="p-4 flex justify-between items-center gap-4 hover:bg-zinc-950/20">
-                            <div>
-                              <h4 className="text-[13px] font-bold text-white">{c.name}</h4>
-                              <p className="text-[11.5px] text-zinc-500 truncate max-w-[380px] mt-0.5">{c.description}</p>
-                            </div>
-                            <button
-                              onClick={() => handleAdminDeleteCharity(c.id)}
-                              className="p-1.5 text-zinc-500 hover:text-red-400 bg-zinc-900 hover:bg-red-500/5 border border-zinc-800 rounded transition-colors"
-                            >
-                              <Trash2 size={13} />
-                            </button>
+                <div className="grid md:grid-cols-2 gap-4">
+                  {adminCharities.map((c) => (
+                    <div key={c.id} className="bg-zinc-950/40 border border-[#222] rounded-lg p-4 flex justify-between items-start gap-4 animate-scaleUp">
+                      <div className="space-y-2 min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          {c.image_urls && c.image_urls.length > 0 ? (
+                            <img src={c.image_urls[0]} alt={c.name} className="w-8 h-8 rounded object-cover border border-[#222] shrink-0" />
+                          ) : (
+                            <div className="w-8 h-8 rounded bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0"><Heart size={12} /></div>
+                          )}
+                          <div className="truncate">
+                            <h4 className="text-[13px] font-bold text-white truncate">{c.name}</h4>
+                            <span className="text-[9px] text-zinc-500 font-mono block">ID: {c.id.substring(0,8)}...</span>
                           </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* ADMIN SUB-TAB C: PRIZE DRAWS ENGINE */}
-                  {adminTab === "draws" && (
-                    <div className="bg-[#141414] border border-[#222] rounded-lg p-6 space-y-6 shadow-xl">
-                      <div className="border-b border-[#222] pb-3">
-                        <h3 className="text-[14px] font-bold text-white">Configure & Execute Monthly Prize Draw</h3>
-                        <p className="text-[11.5px] text-zinc-500 mt-1">Initialize draft draws, run sandboxed simulations, and publish final results.</p>
-                      </div>
-
-                      {/* Cadence Selection */}
-                      <div className="grid sm:grid-cols-3 gap-4 items-end bg-zinc-950/30 p-4 border border-[#222] rounded-lg">
-                        <div className="space-y-1.5">
-                          <label className="text-[11px] text-zinc-400 font-medium">Draw Month</label>
-                          <select 
-                            value={drawMonth} 
-                            onChange={(e) => setDrawMonth(parseInt(e.target.value, 10))}
-                            className="w-full h-8 px-2 bg-zinc-950 border border-zinc-800 rounded text-[12px] text-white focus:outline-none"
-                          >
-                            {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <option key={m} value={m}>{m}</option>)}
-                          </select>
                         </div>
-
-                        <div className="space-y-1.5">
-                          <label className="text-[11px] text-zinc-400 font-medium">Draw Year</label>
-                          <input 
-                            type="number" 
-                            value={drawYear} 
-                            onChange={(e) => setDrawYear(parseInt(e.target.value, 10))}
-                            className="w-full h-8 px-2 bg-zinc-950 border border-zinc-800 rounded text-[12px] text-white focus:outline-none"
-                          />
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <label className="text-[11px] text-zinc-400 font-medium">Algorithm Selection</label>
-                          <select 
-                            value={drawLogic} 
-                            onChange={(e) => setDrawLogic(e.target.value)}
-                            disabled={selectedDraw?.status === "published"}
-                            className="w-full h-8 px-2 bg-zinc-950 border border-zinc-800 rounded text-[12px] text-white focus:outline-none disabled:opacity-50"
-                          >
-                            <option value="random">Random Generation (Unbiased)</option>
-                            <option value="algorithmic">Algorithmic Weighted (Frequency-Based)</option>
-                          </select>
-                        </div>
-                      </div>
-
-                      {/* Draw State Information */}
-                      {!selectedDraw ? (
-                        <div className="bg-zinc-900/30 border border-[#222] rounded-lg p-5 flex flex-col sm:flex-row justify-between items-center gap-4">
-                          <div>
-                            <h4 className="text-[13px] font-bold text-white flex items-center gap-1.5">
-                              <span className="w-2.5 h-2.5 rounded-full bg-zinc-500" />
-                              Status: Not Initialized
-                            </h4>
-                            <p className="text-[11px] text-zinc-500 mt-1">No draw has been configured for {drawMonth}/{drawYear} yet.</p>
-                          </div>
+                        <p className="text-[11.5px] text-zinc-400 line-clamp-2 leading-relaxed">{c.description}</p>
+                        
+                        <div className="flex items-center gap-1.5">
                           <button
-                            onClick={handleCreateDrawDraft}
-                            className="h-8 px-4 bg-indigo-600 hover:bg-indigo-500 text-white text-[11.5px] font-extrabold rounded shadow-md transition-colors"
+                            onClick={() => {
+                              setEditingEventsCharity(c);
+                              setNewEventName("");
+                              setNewEventDate("");
+                              setShowEventsModal(true);
+                            }}
+                            className="text-[10px] text-[#3ecf8e] hover:underline font-bold"
                           >
-                            Initialize Draft Draw
+                            Edit Events ({c.upcoming_events?.length || 0})
                           </button>
                         </div>
-                      ) : (
-                        <div className="space-y-6">
-                          {/* Draw Header */}
-                          <div className="bg-zinc-900/30 border border-[#222] rounded-lg p-4 flex flex-col sm:flex-row justify-between items-center gap-4">
-                            <div>
-                              <h4 className="text-[13.5px] font-bold text-white flex items-center gap-2">
-                                <span className={`w-2.5 h-2.5 rounded-full ${
-                                  selectedDraw.status === "published" ? "bg-emerald-500" :
-                                  selectedDraw.status === "simulated" ? "bg-amber-500" : "bg-blue-500"
-                                }`} />
-                                Status: <span className="capitalize font-mono">{selectedDraw.status}</span>
-                              </h4>
-                              <p className="text-[11px] text-zinc-400 mt-1 font-mono">Draw ID: {selectedDraw.id}</p>
-                              <p className="text-[11px] text-zinc-500 mt-0.5">Strategy: <span className="font-mono text-zinc-300">{selectedDraw.logic_type}</span></p>
-                            </div>
-                            
-                            <div className="flex gap-2">
-                              {selectedDraw.status !== "published" && (
-                                <>
-                                  {drawLogic !== selectedDraw.logic_type && (
-                                    <button
-                                      onClick={handleUpdateDrawStrategy}
-                                      className="h-8 px-3 bg-zinc-800 hover:bg-zinc-700 text-white text-[11px] font-bold rounded border border-zinc-700 transition-colors"
-                                    >
-                                      Save Strategy
-                                    </button>
-                                  )}
-                                  <button
-                                    onClick={handleRunSimulation}
-                                    disabled={drawSimulating}
-                                    className="h-8 px-4 bg-emerald-500 hover:bg-emerald-400 text-black text-[11.5px] font-extrabold rounded flex items-center gap-1.5 disabled:opacity-50 shadow-md transition-colors"
-                                  >
-                                    <Play size={11} fill="currentColor" />
-                                    {drawSimulating ? "Simulating..." : "Run Simulation"}
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          </div>
+                      </div>
 
-                          {/* Simulation Result Area */}
-                          {selectedDraw.status !== "published" && simulationResults && (
-                            <div className="border border-emerald-500/20 bg-emerald-500/5 rounded-lg p-5 space-y-4 animate-scaleUp">
-                              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-emerald-500/10 pb-3 gap-3">
-                                <div>
-                                  <h4 className="text-[13px] font-bold text-white">Projected Simulation Output</h4>
-                                  <p className="text-[10px] text-zinc-400 mt-0.5 font-mono">Simulation ID: {simulationResults.id}</p>
-                                </div>
-                                <div className="flex items-center gap-1.5 font-mono">
-                                  {simulationResults.winning_numbers?.map((n, i) => (
-                                    <span key={i} className="w-8 h-8 rounded-full bg-[#3ecf8e] text-black font-extrabold text-[12px] flex items-center justify-center shadow-md">
-                                      {n}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-
-                              <div className="grid grid-cols-3 gap-4 text-[11px] font-mono text-zinc-400">
-                                <div>Active Subs: <span className="text-white font-bold">{adminProfiles.filter(p => p.subscriptions?.some(s => s.status === "active")).length}</span></div>
-                                <div>Total Pool: <span className="text-[#3ecf8e] font-bold">£{parseFloat(simulationResults.prize_pool_amount).toFixed(2)}</span></div>
-                                <div>Jackpot Rollover: <span className="text-[#3ecf8e] font-bold">£{parseFloat(simulationResults.jackpot_rollover_amount).toFixed(2)}</span></div>
-                              </div>
-
-                              {/* Projected Winners List */}
-                              {simulationResults.projected_winners && simulationResults.projected_winners.filter(w => w.match_count >= 3).length > 0 ? (
-                                <div className="space-y-2 pt-2">
-                                  <h5 className="text-[11.5px] font-bold text-white uppercase tracking-wider">Projected Winners (&ge; 3 Matches)</h5>
-                                  <div className="divide-y divide-zinc-900 border border-zinc-900 rounded-lg overflow-hidden bg-zinc-950/20 text-[11.5px] font-mono max-h-[160px] overflow-y-auto">
-                                    {simulationResults.projected_winners.filter(w => w.match_count >= 3).map((w, idx) => (
-                                      <div key={idx} className="p-2.5 flex justify-between items-center hover:bg-zinc-950/30">
-                                        <span>{w.full_name} (Matches: {w.match_count})</span>
-                                        <span className="text-[#3ecf8e] font-bold">£{parseFloat(w.prize_amount).toFixed(2)}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              ) : (
-                                <p className="text-[11.5px] text-zinc-500 italic bg-zinc-950/20 p-3 rounded-lg border border-zinc-900">No simulated users matched 3+ numbers. The 5-match jackpot pool will roll over to the next month.</p>
-                              )}
-
-                              <div className="flex justify-end pt-2 border-t border-emerald-500/10">
-                                <button
-                                  onClick={handlePublishDraw}
-                                  className="h-8 px-4 bg-[#3ecf8e] text-black hover:bg-[#32b37a] text-[11.5px] font-bold rounded shadow-md transition-colors"
-                                >
-                                  Publish Draw Results (Live)
-                                </button>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Published State Results */}
-                          {selectedDraw.status === "published" && (
-                            <div className="border border-indigo-500/20 bg-indigo-500/5 rounded-lg p-5 space-y-4">
-                              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-indigo-500/10 pb-3 gap-3">
-                                <div>
-                                  <h4 className="text-[13px] font-bold text-white flex items-center gap-1.5">
-                                    <Lock size={12} className="text-indigo-400" />
-                                    Locked Winning Numbers
-                                  </h4>
-                                  <p className="text-[11px] text-zinc-500 mt-0.5">This draw has been published. Results are final.</p>
-                                </div>
-                                <div className="flex items-center gap-1.5 font-mono">
-                                  {selectedDraw.winning_numbers?.map((n, i) => (
-                                    <span key={i} className="w-8 h-8 rounded-full bg-indigo-600 text-white font-extrabold text-[12px] flex items-center justify-center shadow-md">
-                                      {n}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-
-                              <div className="grid grid-cols-2 gap-4 text-[11px] font-mono text-zinc-400">
-                                <div>Authoritative Prize Pool: <span className="text-white font-bold">£{parseFloat(selectedDraw.prize_pool_amount).toFixed(2)}</span></div>
-                                <div>Jackpot Rollover: <span className="text-indigo-400 font-bold">£{parseFloat(selectedDraw.jackpot_rollover_amount).toFixed(2)}</span></div>
-                              </div>
-
-                              {/* Actual Winners */}
-                              <div className="space-y-2 pt-2">
-                                <h5 className="text-[11.5px] font-bold text-white uppercase tracking-wider">Official Winners</h5>
-                                {adminWinners.filter(w => w.draw_id === selectedDraw.id).length > 0 ? (
-                                  <div className="divide-y divide-zinc-900 border border-zinc-900 rounded-lg overflow-hidden bg-zinc-950/20 text-[11.5px] font-mono max-h-[200px] overflow-y-auto">
-                                    {adminWinners.filter(w => w.draw_id === selectedDraw.id).map((w, idx) => {
-                                      const entry = adminDrawEntries.find(e => e.draw_id === w.draw_id && e.user_id === w.user_id);
-                                      const matches = entry ? entry.match_count : 0;
-                                      const prize = entry ? parseFloat(entry.prize_amount).toFixed(2) : "0.00";
-                                      
-                                      return (
-                                        <div key={idx} className="p-2.5 flex justify-between items-center hover:bg-zinc-950/30">
-                                          <div>
-                                            <p className="text-white font-sans font-bold">{w.profiles?.full_name || w.profiles?.email}</p>
-                                            <p className="text-[10px] text-zinc-500">Matches: {matches} · Claim: {w.verification_status} · Payout: {w.payment_status}</p>
-                                          </div>
-                                          <span className="text-indigo-400 font-bold">£{prize}</span>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                ) : (
-                                  <p className="text-[11.5px] text-zinc-500 italic bg-zinc-950/20 p-3 rounded-lg border border-zinc-900">No winners for this draw period. Rollover applied.</p>
-                                )}
-                              </div>
-                            </div>
-                          )}
-
-                        </div>
-                      )}
+                      <div className="flex flex-col items-end gap-2 shrink-0">
+                        <button
+                          onClick={() => handleAdminToggleFeaturedCharity(c.id, c.is_featured)}
+                          className={`h-6.5 px-2.5 rounded text-[10px] font-bold border transition-colors ${
+                            c.is_featured 
+                              ? "bg-rose-500/10 border-rose-500/20 text-rose-400" 
+                              : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white"
+                          }`}
+                        >
+                          {c.is_featured ? "Featured" : "Spotlight"}
+                        </button>
+                        <button
+                          onClick={() => handleAdminDeleteCharity(c.id)}
+                          className="h-6.5 px-2.5 bg-zinc-900 hover:bg-red-500/10 border border-zinc-800 hover:border-red-500/20 text-zinc-500 hover:text-red-400 rounded text-[10px] font-bold transition-all"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </div>
-                  )}
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
-                  {/* ADMIN SUB-TAB D: WINNER REVIEW CLAIMS */}
-                  {adminTab === "claims" && (
-                    <div className="bg-[#141414] border border-[#222] rounded-lg p-6 space-y-4 shadow-xl">
-                      <h3 className="text-[13px] font-bold text-white border-b border-[#222] pb-2">Review Submitted Claims</h3>
+          {/* ============================================================ */}
+          {/* TAB 6C: ADMIN - DRAWS                                        */}
+          {/* ============================================================ */}
+          {activeTab === "admin_draws" && userRole === "admin" && (
+            <div className="space-y-6 animate-fadeInUp">
+              <div className="border-b border-[#222] pb-5">
+                <h1 className="text-[20px] font-bold text-white tracking-tight flex items-center gap-2">
+                  <Trophy size={20} className="text-[#3ecf8e]" />
+                  Admin: Drawings Manager
+                </h1>
+                <p className="text-[12.5px] text-zinc-500 mt-1">Configure drawing cadence, run sandboxed simulations, and lock live drawing results.</p>
+              </div>
 
-                      <div className="divide-y divide-[#222] border border-[#222] rounded-lg overflow-hidden">
-                        {adminWinners.length === 0 ? (
-                          <div className="text-center py-10 text-zinc-500 italic text-[12px]">No winner claims submitted.</div>
-                        ) : (
-                          adminWinners.map((w) => (
-                            <div key={w.id} className="p-4 flex flex-col md:flex-row justify-between items-start gap-4">
-                              <div className="space-y-1.5">
-                                <p className="text-[13px] font-bold text-white">{w.profiles?.full_name || w.profiles?.email}</p>
-                                <p className="text-[11px] text-zinc-500 font-mono">Draw ID: {w.draw_id}</p>
-                                <div className="flex gap-2">
-                                  <span className={`text-[9.5px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
-                                    w.verification_status === "approved" ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"
-                                  }`}>
-                                    Claim: {w.verification_status}
-                                  </span>
-                                  <span className={`text-[9.5px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
-                                    w.payment_status === "paid" ? "bg-emerald-500/10 text-emerald-400" : "bg-zinc-800 text-zinc-400"
-                                  }`}>
-                                    Payout: {w.payment_status}
-                                  </span>
-                                </div>
+              <div className="bg-[#141414] border border-[#222] rounded-lg p-6 space-y-6 shadow-xl">
+                <div className="border-b border-[#222] pb-3">
+                  <h3 className="text-[14px] font-bold text-white">Configure & Execute Monthly Prize Draw</h3>
+                  <p className="text-[11.5px] text-zinc-500 mt-1">Initialize draft draws, run sandboxed simulations, and publish final results.</p>
+                </div>
 
-                                {w.proof_image_url ? (
-                                  <div className="pt-2">
-                                    <p className="text-[9px] text-zinc-500 uppercase tracking-widest font-black pb-1.5">Score Proof Screenshot:</p>
-                                    <img 
-                                      src={w.proof_image_url} 
-                                      alt="Proof" 
-                                      className="max-w-[240px] rounded border border-[#222] shadow-lg object-contain max-h-[140px]"
-                                    />
-                                  </div>
-                                ) : (
-                                  <p className="text-[11px] text-zinc-500 italic pt-1">No screenshot proof uploaded.</p>
-                                )}
-                              </div>
+                {/* Cadence Selection */}
+                <div className="grid sm:grid-cols-3 gap-4 items-end bg-zinc-950/30 p-4 border border-[#222] rounded-lg">
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] text-zinc-400 font-medium">Draw Month</label>
+                    <select 
+                      value={drawMonth} 
+                      onChange={(e) => setDrawMonth(parseInt(e.target.value, 10))}
+                      className="w-full h-8 px-2 bg-zinc-950 border border-zinc-800 rounded text-[12px] text-white focus:outline-none"
+                    >
+                      {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </div>
 
-                              <div className="flex flex-col gap-2 shrink-0">
-                                {w.verification_status !== "approved" && (
-                                  <>
-                                    <button
-                                      onClick={() => handleAdminWinnerVerify(w.id, "approved")}
-                                      className="h-7 px-3 bg-[#3ecf8e] text-black hover:bg-[#32b37a] text-[11px] font-bold rounded"
-                                    >
-                                      Approve
-                                    </button>
-                                    <button
-                                      onClick={() => handleAdminWinnerVerify(w.id, "rejected")}
-                                      className="h-7 px-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 text-[11px] font-bold rounded"
-                                    >
-                                      Reject
-                                    </button>
-                                  </>
-                                )}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] text-zinc-400 font-medium">Draw Year</label>
+                    <input 
+                      type="number" 
+                      value={drawYear} 
+                      onChange={(e) => setDrawYear(parseInt(e.target.value, 10))}
+                      className="w-full h-8 px-2 bg-zinc-950 border border-zinc-800 rounded text-[12px] text-white focus:outline-none"
+                    />
+                  </div>
 
-                                {w.verification_status === "approved" && w.payment_status !== "paid" && (
-                                  <button
-                                    onClick={() => handleAdminWinnerPay(w.id)}
-                                    className="h-7 px-3 bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold rounded"
-                                  >
-                                    Mark Paid
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          ))
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] text-zinc-400 font-medium">Algorithm Selection</label>
+                    <select 
+                      value={drawLogic} 
+                      onChange={(e) => setDrawLogic(e.target.value)}
+                      disabled={selectedDraw?.status === "published"}
+                      className="w-full h-8 px-2 bg-zinc-950 border border-zinc-800 rounded text-[12px] text-white focus:outline-none disabled:opacity-50"
+                    >
+                      <option value="random">Random Generation (Unbiased)</option>
+                      <option value="algorithmic">Algorithmic Weighted (Frequency-Based)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Draw State Information */}
+                {!selectedDraw ? (
+                  <div className="bg-zinc-900/30 border border-[#222] rounded-lg p-5 flex flex-col sm:flex-row justify-between items-center gap-4">
+                    <div>
+                      <h4 className="text-[13px] font-bold text-white flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-full bg-zinc-500" />
+                        Status: Not Initialized
+                      </h4>
+                      <p className="text-[11px] text-zinc-500 mt-1">No draw has been configured for {drawMonth}/{drawYear} yet.</p>
+                    </div>
+                    <button
+                      onClick={handleCreateDrawDraft}
+                      className="h-8 px-4 bg-indigo-600 hover:bg-indigo-500 text-white text-[11.5px] font-extrabold rounded shadow-md transition-colors"
+                    >
+                      Initialize Draft Draw
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {/* Draw Header */}
+                    <div className="bg-zinc-900/30 border border-[#222] rounded-lg p-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+                      <div>
+                        <h4 className="text-[13.5px] font-bold text-white flex items-center gap-2">
+                          <span className={`w-2.5 h-2.5 rounded-full ${
+                            selectedDraw.status === "published" ? "bg-emerald-500" :
+                            selectedDraw.status === "simulated" ? "bg-amber-500" : "bg-blue-500"
+                          }`} />
+                          Status: <span className="capitalize font-mono">{selectedDraw.status}</span>
+                        </h4>
+                        <p className="text-[11px] text-zinc-400 mt-1 font-mono">Draw ID: {selectedDraw.id}</p>
+                        <p className="text-[11px] text-zinc-500 mt-0.5">Strategy: <span className="font-mono text-zinc-300">{selectedDraw.logic_type}</span></p>
+                      </div>
+                      
+                      <div className="flex gap-2">
+                        {selectedDraw.status !== "published" && (
+                          <>
+                            {drawLogic !== selectedDraw.logic_type && (
+                              <button
+                                onClick={handleUpdateDrawStrategy}
+                                className="h-8 px-3 bg-zinc-800 hover:bg-zinc-700 text-white text-[11px] font-bold rounded border border-zinc-700 transition-colors"
+                              >
+                                Save Strategy
+                              </button>
+                            )}
+                            <button
+                              onClick={handleRunSimulation}
+                              disabled={drawSimulating}
+                              className="h-8 px-4 bg-emerald-500 hover:bg-emerald-400 text-black text-[11.5px] font-extrabold rounded flex items-center gap-1.5 disabled:opacity-50 shadow-md transition-colors"
+                            >
+                              <Play size={11} fill="currentColor" />
+                              {drawSimulating ? "Simulating..." : "Run Simulation"}
+                            </button>
+                          </>
                         )}
                       </div>
                     </div>
-                  )}
 
-                  {/* ADMIN SUB-TAB E: REPORTS & ANALYTICS */}
-                  {adminTab === "reports" && (
-                    <div className="space-y-4">
-                      <div className="grid sm:grid-cols-3 gap-4">
-                        {[
-                          { label: "Total Registered Users", val: adminProfiles.length, icon: Users, color: "text-indigo-400" },
-                          { label: "Total Accumulated Pools", val: `£${(adminDraws.reduce((acc, d) => acc + d.prize_pool_amount, 0.00)).toFixed(2)}`, icon: DollarSign, color: "text-emerald-400" },
-                          { label: "Total Charity Funding", val: `£${(adminProfiles.reduce((acc, p) => acc + (p.subscriptions?.some(s => s.status === 'active') ? 1.20 : 0.00), 0.00)).toFixed(2)}`, icon: Heart, color: "text-rose-500" }
-                        ].map((stat, i) => {
-                          const StatIcon = stat.icon;
-                          return (
-                            <div key={i} className="bg-[#141414] border border-[#222] rounded-lg p-4 flex items-center justify-between shadow-lg">
-                              <div className="space-y-1">
-                                <span className="text-[9px] text-zinc-500 uppercase tracking-widest font-black">{stat.label}</span>
-                                <p className="text-[18px] font-black text-white font-mono">{stat.val}</p>
-                              </div>
-                              <div className={`w-8 h-8 rounded bg-zinc-950 flex items-center justify-center border border-zinc-900 ${stat.color}`}>
-                                <StatIcon size={14} />
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      <div className="bg-[#141414] border border-[#222] rounded-lg p-5 shadow-xl space-y-4">
-                        <h3 className="text-[13px] font-bold text-white border-b border-[#222] pb-2">Draw stats</h3>
-                        
-                        <div className="grid sm:grid-cols-2 gap-4 text-[11.5px] font-mono text-zinc-400">
-                          <div className="bg-zinc-950/40 p-3 border border-[#222] rounded-lg space-y-1.5">
-                            <span className="text-[9px] text-zinc-500 uppercase font-black block font-sans">Draw Metrics</span>
-                            <div className="flex justify-between">
-                              <span>Executed Draws:</span>
-                              <span className="font-bold text-white">{adminDraws.length}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>Draft/Simulated:</span>
-                              <span className="font-bold text-white">{adminDraws.filter(d => d.status === 'simulated').length}</span>
-                            </div>
+                    {/* Simulation Result Area */}
+                    {selectedDraw.status !== "published" && simulationResults && (
+                      <div className="border border-emerald-500/20 bg-emerald-500/5 rounded-lg p-5 space-y-4 animate-scaleUp">
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-emerald-500/10 pb-3 gap-3">
+                          <div>
+                            <h4 className="text-[13px] font-bold text-white">Projected Simulation Output</h4>
+                            <p className="text-[10px] text-zinc-400 mt-0.5 font-mono">Simulation ID: {simulationResults.id}</p>
                           </div>
-
-                          <div className="bg-zinc-950/40 p-3 border border-[#222] rounded-lg space-y-1.5">
-                            <span className="text-[9px] text-zinc-500 uppercase font-black block font-sans">Payout Metrics</span>
-                            <div className="flex justify-between">
-                              <span>Claims Submitted:</span>
-                              <span className="font-bold text-white">{adminWinners.length}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>Payouts Disbursed:</span>
-                              <span className="font-bold text-white">{adminWinners.filter(w => w.payment_status === 'paid').length}</span>
-                            </div>
+                          <div className="flex items-center gap-1.5 font-mono">
+                            {simulationResults.winning_numbers?.map((n, i) => (
+                              <span key={i} className="w-8 h-8 rounded-full bg-[#3ecf8e] text-black font-extrabold text-[12px] flex items-center justify-center shadow-md">
+                                {n}
+                              </span>
+                            ))}
                           </div>
                         </div>
+
+                        <div className="grid grid-cols-3 gap-4 text-[11px] font-mono text-zinc-400">
+                          <div>Active Subs: <span className="text-white font-bold">{adminProfiles.filter(p => p.subscriptions?.some(s => s.status === "active")).length}</span></div>
+                          <div>Total Pool: <span className="text-[#3ecf8e] font-bold">£{parseFloat(simulationResults.prize_pool_amount).toFixed(2)}</span></div>
+                          <div>Jackpot Rollover: <span className="text-[#3ecf8e] font-bold">£{parseFloat(simulationResults.jackpot_rollover_amount).toFixed(2)}</span></div>
+                        </div>
+
+                        {/* Projected Winners List */}
+                        {simulationResults.projected_winners && simulationResults.projected_winners.filter(w => w.match_count >= 3).length > 0 ? (
+                          <div className="space-y-2 pt-2">
+                            <h5 className="text-[11.5px] font-bold text-white uppercase tracking-wider">Projected Winners (&ge; 3 Matches)</h5>
+                            <div className="divide-y divide-zinc-900 border border-zinc-900 rounded-lg overflow-hidden bg-zinc-950/20 text-[11.5px] font-mono max-h-[160px] overflow-y-auto">
+                              {simulationResults.projected_winners.filter(w => w.match_count >= 3).map((w, idx) => (
+                                <div key={idx} className="p-2.5 flex justify-between items-center hover:bg-zinc-950/30">
+                                  <span>{w.full_name} (Matches: {w.match_count})</span>
+                                  <span className="text-[#3ecf8e] font-bold">£{parseFloat(w.prize_amount).toFixed(2)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-[11.5px] text-zinc-500 italic bg-zinc-950/20 p-3 rounded-lg border border-zinc-900">No simulated users matched 3+ numbers. The 5-match jackpot pool will roll over to the next month.</p>
+                        )}
+
+                        <div className="flex justify-end pt-2 border-t border-emerald-500/10">
+                          <button
+                            onClick={handlePublishDraw}
+                            className="h-8 px-4 bg-[#3ecf8e] text-black hover:bg-[#32b37a] text-[11.5px] font-bold rounded shadow-md transition-colors"
+                          >
+                            Publish Draw Results (Live)
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
 
-                </div>
+                    {/* Published State Results */}
+                    {selectedDraw.status === "published" && (
+                      <div className="border border-indigo-500/20 bg-indigo-500/5 rounded-lg p-5 space-y-4">
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-indigo-500/10 pb-3 gap-3">
+                          <div>
+                            <h4 className="text-[13px] font-bold text-white flex items-center gap-1.5">
+                              <Lock size={12} className="text-indigo-400" />
+                              Locked Winning Numbers
+                            </h4>
+                            <p className="text-[11px] text-zinc-500 mt-0.5">This draw has been published. Results are final.</p>
+                          </div>
+                          <div className="flex items-center gap-1.5 font-mono">
+                            {selectedDraw.winning_numbers?.map((n, i) => (
+                              <span key={i} className="w-8 h-8 rounded-full bg-indigo-600 text-white font-extrabold text-[12px] flex items-center justify-center shadow-md">
+                                {n}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
 
+                        <div className="grid grid-cols-2 gap-4 text-[11px] font-mono text-zinc-400">
+                          <div>Authoritative Prize Pool: <span className="text-white font-bold">£{parseFloat(selectedDraw.prize_pool_amount).toFixed(2)}</span></div>
+                          <div>Jackpot Rollover: <span className="text-indigo-400 font-bold">£{parseFloat(selectedDraw.jackpot_rollover_amount).toFixed(2)}</span></div>
+                        </div>
+
+                        {/* Actual Winners */}
+                        <div className="space-y-2 pt-2">
+                          <h5 className="text-[11.5px] font-bold text-white uppercase tracking-wider">Official Winners</h5>
+                          {adminWinners.filter(w => w.draw_id === selectedDraw.id).length > 0 ? (
+                            <div className="divide-y divide-zinc-900 border border-zinc-900 rounded-lg overflow-hidden bg-zinc-950/20 text-[11.5px] font-mono max-h-[200px] overflow-y-auto">
+                              {adminWinners.filter(w => w.draw_id === selectedDraw.id).map((w, idx) => {
+                                const entry = adminDrawEntries.find(e => e.draw_id === w.draw_id && e.user_id === w.user_id);
+                                const matches = entry ? entry.match_count : 0;
+                                const prize = entry ? parseFloat(entry.prize_amount).toFixed(2) : "0.00";
+                                
+                                return (
+                                  <div key={idx} className="p-2.5 flex justify-between items-center hover:bg-zinc-950/30">
+                                    <div>
+                                      <p className="text-white font-sans font-bold">{w.profiles?.full_name || w.profiles?.email}</p>
+                                      <p className="text-[10px] text-zinc-500">Matches: {matches} · Claim: {w.verification_status} · Payout: {w.payment_status}</p>
+                                    </div>
+                                    <span className="text-indigo-400 font-bold">£{prize}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <p className="text-[11.5px] text-zinc-500 italic bg-zinc-950/20 p-3 rounded-lg border border-zinc-900">No winners for this draw period. Rollover applied.</p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ============================================================ */}
+          {/* TAB 6D: ADMIN - WINNERS                                      */}
+          {/* ============================================================ */}
+          {activeTab === "admin_winners" && userRole === "admin" && (
+            <div className="space-y-6 animate-fadeInUp">
+              <div className="border-b border-[#222] pb-5">
+                <h1 className="text-[20px] font-bold text-white tracking-tight flex items-center gap-2">
+                  <Award size={20} className="text-[#3ecf8e]" />
+                  Admin: Winner Claims & Payouts
+                </h1>
+                <p className="text-[12.5px] text-zinc-500 mt-1">Review uploaded score proof screenshots, verify claim eligibility, and track payout statuses.</p>
               </div>
 
-              {/* Admin Modal: Edit User Scores */}
-              {showUserScoresModal && selectedUserScores && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                  <div className="bg-[#141414] border border-[#2e2e2e] rounded-xl max-w-[440px] w-full p-6 space-y-4 animate-scaleUp">
-                    <div className="flex justify-between items-start border-b border-[#222] pb-2">
-                      <div>
-                        <h3 className="text-[15px] font-bold text-white">Scores: {selectedUserScores.full_name || selectedUserScores.email}</h3>
-                        <p className="text-[12px] text-zinc-400">Review or delete rounds logged for this profile.</p>
-                      </div>
-                      <button 
-                        onClick={() => {
-                          setShowUserScoresModal(false);
-                          setSelectedUserScores(null);
-                        }}
-                        className="text-zinc-500 hover:text-white text-[20px] font-bold leading-none"
-                      >
-                        &times;
-                      </button>
-                    </div>
+              {/* Filters Box */}
+              <div className="flex gap-3 bg-zinc-950/30 p-4 border border-[#222] rounded-lg">
+                <div className="space-y-1.5">
+                  <label className="text-[11px] text-zinc-400 font-medium">Claim Status</label>
+                  <select 
+                    value={claimVerificationFilter} 
+                    onChange={(e) => setClaimVerificationFilter(e.target.value)}
+                    className="h-8 px-2 bg-zinc-950 border border-zinc-800 rounded text-[12px] text-white focus:outline-none"
+                  >
+                    <option value="all">All Claims</option>
+                    <option value="pending">Pending Review</option>
+                    <option value="approved">Approved</option>
+                    <option value="rejected">Rejected</option>
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[11px] text-zinc-400 font-medium">Payout Status</label>
+                  <select 
+                    value={claimPaymentFilter} 
+                    onChange={(e) => setClaimPaymentFilter(e.target.value)}
+                    className="h-8 px-2 bg-zinc-950 border border-zinc-800 rounded text-[12px] text-white focus:outline-none"
+                  >
+                    <option value="all">All Payouts</option>
+                    <option value="pending">Pending Payment</option>
+                    <option value="paid">Paid</option>
+                  </select>
+                </div>
+              </div>
 
-                    <div className="space-y-2 max-h-[260px] overflow-y-auto font-mono text-[12px]">
-                      {(selectedUserScores.scores || []).length === 0 ? (
-                        <p className="text-center py-6 text-zinc-500 italic font-sans text-[12.5px]">No scores logged for this user.</p>
-                      ) : (
-                        selectedUserScores.scores.map((sc) => (
-                          <div key={sc.id} className="flex justify-between items-center p-3 bg-zinc-950/60 border border-[#222] rounded-lg">
-                            <div>
-                              <p className="font-bold text-white">Points: {sc.score_value}</p>
-                              <p className="text-[11px] text-zinc-500 font-sans">Date: {sc.score_date}</p>
-                            </div>
-                            <button
-                              onClick={() => handleAdminDeleteScore(sc.id)}
-                              className="p-1 text-zinc-500 hover:text-red-400 bg-zinc-900 border border-zinc-800 rounded"
-                            >
-                              <Trash2 size={13} />
-                            </button>
+              {/* Submitted Claims List */}
+              <div className="bg-[#141414] border border-[#222] rounded-lg p-6 space-y-4 shadow-xl">
+                <h3 className="text-[13px] font-bold text-white border-b border-[#222] pb-2">Review Submitted Claims</h3>
+
+                <div className="divide-y divide-[#222] border border-[#222] rounded-lg overflow-hidden font-sans">
+                  {adminWinners.filter((w) => {
+                    const matchesVerify = claimVerificationFilter === "all" || w.verification_status === claimVerificationFilter;
+                    const matchesPay = claimPaymentFilter === "all" || w.payment_status === claimPaymentFilter;
+                    return matchesVerify && matchesPay;
+                  }).length === 0 ? (
+                    <div className="text-center py-10 text-zinc-500 italic text-[12px]">No winner claims match the filters.</div>
+                  ) : (
+                    adminWinners.filter((w) => {
+                      const matchesVerify = claimVerificationFilter === "all" || w.verification_status === claimVerificationFilter;
+                      const matchesPay = claimPaymentFilter === "all" || w.payment_status === claimPaymentFilter;
+                      return matchesVerify && matchesPay;
+                    }).map((w) => (
+                      <div key={w.id} className="p-4 flex flex-col md:flex-row justify-between items-start gap-4">
+                        <div className="space-y-2 min-w-0 flex-1">
+                          <div className="flex items-center gap-2.5 flex-wrap">
+                            <p className="text-[13px] font-bold text-white">{w.profiles?.full_name || w.profiles?.email}</p>
+                            <span className="text-[10px] text-zinc-500 font-mono">ID: {w.id.substring(0, 8)}...</span>
                           </div>
-                        ))
-                      )}
+                          
+                          <p className="text-[11.5px] text-zinc-400">
+                            Draw Month/Year: <span className="font-mono text-zinc-300 font-bold">{w.draws?.month}/{w.draws?.year}</span> · 
+                            Prize: <span className="text-emerald-400 font-bold">
+                              {w.draws?.draw_type === "three_match" ? "3-Number Match" : 
+                               w.draws?.draw_type === "four_match" ? "4-Number Match" : "5-Number Match (Jackpot)"}
+                            </span>
+                          </p>
+
+                          <div className="flex gap-2">
+                            <span className={`text-[9.5px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${
+                              w.verification_status === "approved" ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" : 
+                              w.verification_status === "rejected" ? "bg-red-500/10 border-red-500/20 text-red-400" : "bg-amber-500/10 border-amber-500/20 text-amber-400"
+                            }`}>
+                              Claim: {w.verification_status}
+                            </span>
+                            <span className={`text-[9.5px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${
+                              w.payment_status === "paid" ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" : "bg-zinc-800 border-zinc-700/50 text-zinc-500"
+                            }`}>
+                              Payout: {w.payment_status}
+                            </span>
+                          </div>
+
+                          {w.verification_status === "rejected" && w.rejection_reason && (
+                            <p className="text-[12px] text-red-400 bg-red-500/5 border border-red-500/10 p-2 rounded-lg max-w-lg leading-relaxed">
+                              Rejection Reason: {w.rejection_reason}
+                            </p>
+                          )}
+
+                          {w.proof_image_url ? (
+                            <div className="pt-2">
+                              <p className="text-[9.5px] text-zinc-500 uppercase tracking-widest font-black pb-1.5">Score Proof (Click to Zoom):</p>
+                              <button 
+                                onClick={() => setAdminProofModal(w.proof_image_url)}
+                                className="relative group text-left cursor-zoom-in block"
+                                title="Click to zoom proof"
+                              >
+                                <img 
+                                  src={w.proof_image_url} 
+                                  alt="Proof" 
+                                  className="max-w-[240px] rounded border border-[#222] shadow-lg object-contain max-h-[140px] group-hover:opacity-85 transition-opacity bg-zinc-950"
+                                />
+                                <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity rounded">
+                                  <span className="text-[10px] bg-zinc-900/90 text-white px-2.5 py-1 rounded font-bold border border-zinc-855 shadow-lg font-sans">Zoom Proof</span>
+                                </div>
+                              </button>
+                            </div>
+                          ) : (
+                            <p className="text-[11px] text-zinc-500 italic pt-1">No screenshot proof uploaded.</p>
+                          )}
+                        </div>
+
+                        <div className="flex flex-col gap-2 shrink-0 self-center">
+                          {w.verification_status === "pending" && (
+                            <>
+                              <button
+                                onClick={() => handleApproveWinner(w.id)}
+                                className="h-8 px-4 bg-[#3ecf8e] text-black hover:bg-[#32b37a] text-[11px] font-bold rounded shadow-md transition-colors"
+                              >
+                                Approve Claim
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setVerifyingWinner(w.id);
+                                  setRejectionReason("");
+                                  setShowRejectModal(true);
+                                }}
+                                className="h-8 px-4 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 text-[11px] font-bold rounded transition-colors"
+                              >
+                                Reject Claim
+                              </button>
+                            </>
+                          )}
+
+                          {w.verification_status === "approved" && w.payment_status === "pending" && (
+                            <button
+                              onClick={() => handleAdminWinnerPay(w.id)}
+                              className="h-8 px-4 bg-indigo-600 hover:bg-indigo-500 text-white text-[11.5px] font-bold rounded shadow-md transition-colors"
+                            >
+                              Mark as Paid
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ============================================================ */}
+          {/* TAB 6E: ADMIN - REPORTS                                      */}
+          {/* ============================================================ */}
+          {activeTab === "admin_reports" && userRole === "admin" && (
+            <div className="space-y-6 animate-fadeInUp">
+              <div className="border-b border-[#222] pb-5">
+                <h1 className="text-[20px] font-bold text-white tracking-tight flex items-center gap-2">
+                  <TrendingUp size={20} className="text-[#3ecf8e]" />
+                  Admin: Reports & Analytics
+                </h1>
+                <p className="text-[12.5px] text-zinc-500 mt-1">Review user registration growth, prize distribution, and charity supporters.</p>
+              </div>
+
+              {/* KPI Cards */}
+              <div className="grid sm:grid-cols-3 gap-4">
+                {[
+                  { label: "Total Registered Users", val: adminProfiles.length, icon: Users, color: "text-indigo-400" },
+                  { label: "Total Accumulated Pools", val: `£${(adminDraws.reduce((acc, d) => acc + d.prize_pool_amount, 0.00)).toFixed(2)}`, icon: DollarSign, color: "text-emerald-400" },
+                  { label: "Total Charity Funding", val: `£${(adminProfiles.reduce((acc, p) => acc + (p.subscriptions?.some(s => s.status === 'active') ? 1.20 : 0.00), 0.00)).toFixed(2)}`, icon: Heart, color: "text-rose-500" }
+                ].map((stat, i) => {
+                  const StatIcon = stat.icon;
+                  return (
+                    <div key={i} className="bg-[#141414] border border-[#222] rounded-xl p-5 flex items-center justify-between shadow-lg">
+                      <div className="space-y-1">
+                        <p className="text-[11px] text-zinc-500 font-bold uppercase tracking-wider">{stat.label}</p>
+                        <p className={`text-[22px] font-black ${stat.color}`}>{stat.val}</p>
+                      </div>
+                      <div className="w-10 h-10 rounded-xl bg-zinc-950 border border-zinc-900 flex items-center justify-center">
+                        <StatIcon size={18} className={stat.color} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Recharts Visualizations */}
+              {isMounted && (
+                <div className="grid md:grid-cols-2 gap-6 font-sans">
+                  {/* Chart 1: User Growth */}
+                  <div className="bg-[#141414] border border-[#222] rounded-xl p-5 space-y-4 shadow-xl">
+                    <div>
+                      <h3 className="text-[13px] font-bold text-white uppercase tracking-wider font-sans">User Registration Growth</h3>
+                      <p className="text-[11.5px] text-zinc-500 mt-0.5 font-sans">Total accounts created over time</p>
+                    </div>
+                    <div className="h-64 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={getChartUserData()} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                          <defs>
+                            <linearGradient id="userGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#6366f1" stopOpacity={0.2}/>
+                              <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#222" />
+                          <XAxis dataKey="name" stroke="#555" fontSize={10} tickLine={false} />
+                          <YAxis stroke="#555" fontSize={10} tickLine={false} />
+                          <RechartsTooltip contentStyle={{ backgroundColor: "#141414", borderColor: "#222", borderRadius: 8, fontSize: 11 }} labelClassName="text-white font-bold font-sans" />
+                          <Area type="monotone" dataKey="Users" stroke="#6366f1" strokeWidth={2} fillOpacity={1} fill="url(#userGrad)" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  {/* Chart 2: Charity Supporters */}
+                  <div className="bg-[#141414] border border-[#222] rounded-xl p-5 space-y-4 shadow-xl">
+                    <div>
+                      <h3 className="text-[13px] font-bold text-white uppercase tracking-wider font-sans">Charity Partner Supporters</h3>
+                      <p className="text-[11.5px] text-zinc-500 mt-0.5 font-sans">Active golfer counts supporting each cause</p>
+                    </div>
+                    <div className="h-64 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={getChartCharityData()} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#222" />
+                          <XAxis dataKey="name" stroke="#555" fontSize={10} tickLine={false} />
+                          <YAxis stroke="#555" fontSize={10} tickLine={false} />
+                          <RechartsTooltip contentStyle={{ backgroundColor: "#141414", borderColor: "#222", borderRadius: 8, fontSize: 11 }} labelClassName="text-white font-bold font-sans" />
+                          <Bar dataKey="Supporters" fill="#f43f5e" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
                     </div>
                   </div>
                 </div>
               )}
-
-              {/* Admin Modal: Add Charity */}
-              {showAddCharityModal && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                  <div className="bg-[#141414] border border-[#2e2e2e] rounded-xl max-w-[400px] w-full p-6 space-y-4 animate-scaleUp">
-                    <div className="flex justify-between items-start border-b border-[#222] pb-2">
-                      <div>
-                        <h3 className="text-[15px] font-bold text-white">Add Charity Partner</h3>
-                        <p className="text-[12px] text-zinc-400">Configure partner details.</p>
-                      </div>
-                      <button 
-                        onClick={() => setShowAddCharityModal(false)}
-                        className="text-zinc-500 hover:text-white text-[20px] font-bold leading-none"
-                      >
-                        &times;
-                      </button>
-                    </div>
-
-                    <form onSubmit={handleAdminAddCharity} className="space-y-4 text-[12.5px]">
-                      <div className="space-y-1">
-                        <label className="font-medium text-zinc-400">Charity Name</label>
-                        <input
-                          type="text"
-                          required
-                          value={newCharityName}
-                          onChange={(e) => setNewCharityName(e.target.value)}
-                          placeholder="e.g. Save the Children"
-                          className="w-full h-9 px-3 bg-zinc-950 border border-zinc-800 rounded text-white focus:outline-none focus:border-[#3ecf8e]"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="font-medium text-zinc-400">Description</label>
-                        <textarea
-                          required
-                          value={newCharityDesc}
-                          onChange={(e) => setNewCharityDesc(e.target.value)}
-                          placeholder="Mission details..."
-                          className="w-full h-16 p-3 bg-zinc-950 border border-zinc-800 rounded text-white focus:outline-none resize-none"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="font-medium text-zinc-400">Logo Image URL</label>
-                        <input
-                          type="text"
-                          value={newCharityImg}
-                          onChange={(e) => setNewCharityImg(e.target.value)}
-                          placeholder="https://..."
-                          className="w-full h-9 px-3 bg-zinc-950 border border-zinc-800 rounded text-white focus:outline-none focus:border-[#3ecf8e]"
-                        />
-                      </div>
-
-                      <div className="flex items-center gap-2 pt-1">
-                        <input
-                          type="checkbox"
-                          id="featured"
-                          checked={newCharityFeatured}
-                          onChange={(e) => setNewCharityFeatured(e.target.checked)}
-                          className="w-4 h-4 accent-[#3ecf8e] rounded bg-zinc-950 border-zinc-800"
-                        />
-                        <label htmlFor="featured" className="font-medium text-zinc-300">Spotlight featured partner</label>
-                      </div>
-
-                      <div className="flex gap-2 justify-end pt-2">
-                        <button
-                          type="button"
-                          onClick={() => setShowAddCharityModal(false)}
-                          className="px-4 py-1.5 border border-zinc-800 rounded text-[12px] text-zinc-400 hover:text-white"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="submit"
-                          className="px-4 py-1.5 bg-[#3ecf8e] text-black font-bold rounded text-[12px]"
-                        >
-                          Save Partner
-                        </button>
-                      </div>
-                    </form>
-                  </div>
-                </div>
-              )}
-
             </div>
           )}
 
           </div>
         </main>
       </div>
+
+      {/* Admin Modal: Edit User Scores */}
+      {showUserScoresModal && selectedUserScores && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#141414] border border-[#2e2e2e] rounded-xl max-w-[440px] w-full p-6 space-y-4 animate-scaleUp">
+            <div className="flex justify-between items-start border-b border-[#222] pb-2 font-sans">
+              <div>
+                <h3 className="text-[15px] font-bold text-white">Scores: {selectedUserScores.full_name || selectedUserScores.email}</h3>
+                <p className="text-[12px] text-zinc-400">Review or delete rounds logged for this profile.</p>
+              </div>
+              <button 
+                onClick={() => {
+                  setShowUserScoresModal(false);
+                  setSelectedUserScores(null);
+                }}
+                className="text-zinc-500 hover:text-white text-[20px] font-bold leading-none"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="space-y-2 max-h-[260px] overflow-y-auto font-mono text-[12px]">
+              {(selectedUserScores.scores || []).length === 0 ? (
+                <p className="text-center py-6 text-zinc-500 italic font-sans text-[12.5px]">No scores logged for this user.</p>
+              ) : (
+                selectedUserScores.scores.map((sc) => (
+                  <div key={sc.id} className="flex justify-between items-center p-3 bg-zinc-950/60 border border-[#222] rounded-lg">
+                    <div>
+                      <p className="font-bold text-white font-mono">Points: {sc.score_value}</p>
+                      <p className="text-[11px] text-zinc-500 font-sans">Date: {sc.score_date}</p>
+                    </div>
+                    <button
+                      onClick={() => handleAdminDeleteScore(sc.id)}
+                      className="p-1 text-zinc-500 hover:text-red-400 bg-zinc-900 border border-zinc-800 rounded transition-colors"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Admin Modal: Add Charity */}
+      {showAddCharityModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#141414] border border-[#2e2e2e] rounded-xl max-w-[400px] w-full p-6 space-y-4 animate-scaleUp">
+            <div className="flex justify-between items-start border-b border-[#222] pb-2 font-sans">
+              <div>
+                <h3 className="text-[15px] font-bold text-white">Add Charity Partner</h3>
+                <p className="text-[12px] text-zinc-400">Configure partner details.</p>
+              </div>
+              <button 
+                onClick={() => setShowAddCharityModal(false)}
+                className="text-zinc-500 hover:text-white text-[20px] font-bold leading-none"
+              >
+                &times;
+              </button>
+            </div>
+
+            <form onSubmit={handleAdminAddCharity} className="space-y-4 text-[12.5px] font-sans">
+              <div className="space-y-1">
+                <label className="font-medium text-zinc-400">Charity Name</label>
+                <input
+                  type="text"
+                  required
+                  value={newCharityName}
+                  onChange={(e) => setNewCharityName(e.target.value)}
+                  placeholder="e.g. Save the Children"
+                  className="w-full h-9 px-3 bg-zinc-950 border border-zinc-800 rounded text-white focus:outline-none focus:border-[#3ecf8e]"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-medium text-zinc-400">Description</label>
+                <textarea
+                  required
+                  value={newCharityDesc}
+                  onChange={(e) => setNewCharityDesc(e.target.value)}
+                  placeholder="Mission details..."
+                  className="w-full h-16 p-3 bg-zinc-950 border border-zinc-800 rounded text-white focus:outline-none resize-none"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-medium text-zinc-400">Logo Image URL</label>
+                <input
+                  type="text"
+                  value={newCharityImg}
+                  onChange={(e) => setNewCharityImg(e.target.value)}
+                  placeholder="https://..."
+                  className="w-full h-9 px-3 bg-zinc-950 border border-zinc-800 rounded text-white focus:outline-none focus:border-[#3ecf8e]"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="featured"
+                  checked={newCharityFeatured}
+                  onChange={(e) => setNewCharityFeatured(e.target.checked)}
+                  className="w-4 h-4 accent-[#3ecf8e] rounded bg-zinc-950 border-zinc-800"
+                />
+                <label htmlFor="featured" className="font-medium text-zinc-300">Spotlight featured partner</label>
+              </div>
+
+              <div className="flex gap-2 justify-end pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddCharityModal(false)}
+                  className="px-4 py-1.5 border border-zinc-800 rounded text-[12px] text-zinc-400 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 bg-[#3ecf8e] text-black font-bold rounded text-[12px]"
+                >
+                  Save Partner
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Admin Modal: Edit Charity Events */}
+      {showEventsModal && editingEventsCharity && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#141414] border border-[#2e2e2e] rounded-xl max-w-[440px] w-full p-6 space-y-4 animate-scaleUp">
+            <div className="flex justify-between items-start border-b border-[#222] pb-2 font-sans">
+              <div>
+                <h3 className="text-[15px] font-bold text-white">Events: {editingEventsCharity.name}</h3>
+                <p className="text-[12px] text-zinc-400 font-sans">Manage upcoming campaigns or events.</p>
+              </div>
+              <button 
+                onClick={() => {
+                  setShowEventsModal(false);
+                  setEditingEventsCharity(null);
+                }}
+                className="text-zinc-500 hover:text-white text-[20px] font-bold leading-none font-sans"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Event list */}
+            <div className="space-y-2 max-h-[160px] overflow-y-auto text-[11.5px] font-mono">
+              {(!editingEventsCharity.upcoming_events || editingEventsCharity.upcoming_events.length === 0) ? (
+                <p className="text-center py-4 text-zinc-500 italic font-sans text-[12px]">No events configured.</p>
+              ) : (
+                editingEventsCharity.upcoming_events.map((ev, idx) => (
+                  <div key={idx} className="flex justify-between items-center p-2.5 bg-zinc-950/60 border border-[#222] rounded-lg">
+                    <div className="truncate pr-2">
+                      <p className="font-bold text-white font-sans truncate">{ev.name}</p>
+                      <p className="text-[10px] text-zinc-500 font-sans">{ev.date}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated = editingEventsCharity.upcoming_events.filter((_, i) => i !== idx);
+                        setEditingEventsCharity(prev => ({ ...prev, upcoming_events: updated }));
+                      }}
+                      className="p-1 text-zinc-500 hover:text-red-400 bg-zinc-900 border border-zinc-800 rounded transition-colors"
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Add Event Form */}
+            <div className="space-y-3 pt-2 border-t border-[#222] font-sans">
+              <span className="text-[10px] text-zinc-500 uppercase tracking-widest font-black block font-sans">Add Event</span>
+              <div className="grid grid-cols-2 gap-3 text-[12px]">
+                <div className="space-y-1">
+                  <label className="text-zinc-400 font-medium font-sans">Event Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Annual Gala"
+                    value={newEventName}
+                    onChange={(e) => setNewEventName(e.target.value)}
+                    className="w-full h-8 px-2 bg-zinc-950 border border-zinc-800 rounded text-white focus:outline-none focus:border-[#3ecf8e]"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-zinc-400 font-medium font-sans">Event Date</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 25 Aug 2026"
+                    value={newEventDate}
+                    onChange={(e) => setNewEventDate(e.target.value)}
+                    className="w-full h-8 px-2 bg-zinc-950 border border-zinc-800 rounded text-white focus:outline-none focus:border-[#3ecf8e]"
+                  />
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!newEventName.trim() || !newEventDate.trim()) {
+                    triggerToast("Please fill in both event name and date.", "error");
+                    return;
+                  }
+                  const newEv = { name: newEventName.trim(), date: newEventDate.trim() };
+                  const updated = [...(editingEventsCharity.upcoming_events || []), newEv];
+                  setEditingEventsCharity(prev => ({ ...prev, upcoming_events: updated }));
+                  setNewEventName("");
+                  setNewEventDate("");
+                }}
+                className="w-full h-8 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 hover:text-white font-bold rounded text-[11px] transition-all"
+              >
+                Add Event to List
+              </button>
+            </div>
+
+            {/* Actions Row */}
+            <div className="flex gap-2 justify-end pt-2 border-t border-[#222] font-sans">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowEventsModal(false);
+                  setEditingEventsCharity(null);
+                }}
+                className="px-4 py-1.5 border border-zinc-800 rounded text-[12px] text-zinc-400 hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  handleAdminSaveCharityEvents(editingEventsCharity.id, editingEventsCharity.upcoming_events);
+                  setShowEventsModal(false);
+                }}
+                className="px-4 py-1.5 bg-[#3ecf8e] text-black font-bold rounded text-[12px]"
+              >
+                Save All Events
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Admin Modal: Reject Winner Claim */}
+      {showRejectModal && verifyingWinner && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#141414] border border-red-500/20 rounded-xl max-w-[420px] w-full p-6 space-y-4 animate-scaleUp">
+            <div className="flex justify-between items-start border-b border-[#222] pb-2 font-sans">
+              <div>
+                <h3 className="text-[15px] font-bold text-white">Reject Winner Claim</h3>
+                <p className="text-[12px] text-zinc-400">Specify the reason for rejecting this score proof.</p>
+              </div>
+              <button 
+                onClick={() => {
+                  setShowRejectModal(false);
+                  setVerifyingWinner(null);
+                  setRejectionReason("");
+                }}
+                className="text-zinc-500 hover:text-white text-[20px] font-bold leading-none"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="space-y-2 font-sans">
+              <label className="text-[12px] text-zinc-400 font-medium">Rejection Reason (10 - 1000 characters)</label>
+              <textarea
+                required
+                rows={4}
+                value={rejectionReason}
+                onChange={(e) => setRejectionReason(e.target.value)}
+                placeholder="Explain why the proof was rejected (e.g. score mismatch, wrong date)..."
+                className="w-full p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-[12.5px] focus:outline-none focus:border-red-500 resize-none font-sans"
+              />
+              <div className="flex justify-between text-[10px] text-zinc-500">
+                <span>Min: 10 chars · Max: 1000 chars</span>
+                <span className={rejectionReason.trim().length >= 10 ? "text-[#3ecf8e]" : "text-red-400"}>
+                  {rejectionReason.trim().length} characters
+                </span>
+              </div>
+            </div>
+
+            <div className="flex gap-2 justify-end pt-2 border-t border-[#222] font-sans">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRejectModal(false);
+                  setVerifyingWinner(null);
+                  setRejectionReason("");
+                }}
+                className="px-4 py-1.5 border border-zinc-800 rounded text-[12px] text-zinc-400 hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={rejectionReason.trim().length < 10 || rejectionReason.trim().length > 1000}
+                onClick={() => handleRejectWinner(verifyingWinner, rejectionReason)}
+                className="px-4 py-1.5 bg-red-650 text-white font-bold rounded text-[12px] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-red-500 transition-colors"
+              >
+                Submit Rejection
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Lightbox Zoom Viewer Modal */}
+      {adminProofModal && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-50 flex items-center justify-center p-4 cursor-zoom-out" onClick={() => setAdminProofModal(null)}>
+          <div className="relative max-w-4xl w-full flex flex-col items-center gap-4 animate-scaleUp" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setAdminProofModal(null)}
+              className="absolute -top-10 right-0 text-zinc-400 hover:text-white flex items-center gap-1.5 text-[12px] font-bold bg-zinc-900/80 border border-zinc-850 px-3 py-1.5 rounded-lg shadow-lg hover:border-zinc-700 transition-colors font-sans"
+            >
+              Close Fullscreen
+            </button>
+            <img 
+              src={adminProofModal} 
+              alt="Proof Fullsize" 
+              className="max-h-[80vh] w-auto max-w-full rounded-xl border border-zinc-800 shadow-2xl object-contain bg-zinc-950"
+            />
+          </div>
+        </div>
+      )}
 
       {/* Subscription Confirming Backdrop */}
       {verifyingSubscription && (
