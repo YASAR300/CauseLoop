@@ -370,6 +370,10 @@ export default function DashboardPage() {
         setUser(currentUser);
         fetchData(currentUser);
 
+        // Self-healing welcome email fallback check
+        fetch("/api/auth/welcome", { method: "POST" })
+          .catch((err) => console.error("Welcome email check failed:", err));
+
         // Check Stripe success redirects
         const searchParams = new URLSearchParams(window.location.search);
         const isCheckoutSuccess = searchParams.get("checkout") === "success";

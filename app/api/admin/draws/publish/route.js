@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServerClient, createAdminClient } from "@/lib/supabase/server";
 import { determineWinnersAndPayouts } from "@/lib/draw-engine";
+import { sendTransactionalEmail, getDrawResultsHtml, getWinnerAlertHtml } from "@/lib/brevo";
 
 export const dynamic = "force-dynamic";
 
@@ -193,27 +194,12 @@ export async function POST(request) {
       if (insertWinnersErr) {
         console.error("Failed to insert into winners table:", insertWinnersErr.message);
       }
-
-      // 10. Queue transactional notification logs for Phase 10
-      const notificationsToInsert = evaluation.winners.map(winner => ({
-        user_id: winner.userId,
-        type: "draw_winner_announcement",
-        status: "pending",
-        metadata: {
-          draw_id: drawId,
-          prize_amount: winner.prize_amount,
-          match_count: winner.match_count
-        }
-      }));
-
-      const { error: insertNotifErr } = await adminClient
-        .from("notifications_log")
-        .insert(notificationsToInsert);
-
-      if (insertNotifErr) {
-        console.error("Failed to insert notification logs:", insertNotifErr.message);
-      }
     }
+
+    // Trigger emails asynchronously in the background so it doesn't block the publish HTTP response
+    sendDrawEmailsInBackground(draw, winningNumbers, activeProfiles, evaluation.winners).catch(err => {
+      console.error("[Draw Publish] Error triggering draw emails in background:", err);
+    });
 
     return NextResponse.json({
       success: true,
@@ -226,4 +212,95 @@ export async function POST(request) {
     console.error("[Draws Publish Error]:", err);
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
+}
+
+// ── Paginated User Retrieval Loop ──
+async function getAllSupabaseUsers(adminClient) {
+  let allUsers = [];
+  let page = 1;
+  const perPage = 1000;
+  while (true) {
+    const { data: { users }, error } = await adminClient.auth.admin.listUsers({
+      page,
+      perPage
+    });
+    if (error) {
+      throw error;
+    }
+    if (!users || users.length === 0) {
+      break;
+    }
+    allUsers.push(...users);
+    if (users.length < perPage) {
+      break;
+    }
+    page++;
+  }
+  return allUsers;
+}
+
+// ── Background Email Sending Helper ──
+async function sendDrawEmailsInBackground(draw, winningNumbers, activeProfiles, winners) {
+  try {
+    const adminClient = createAdminClient();
+
+    // 1. Fetch all users from Supabase Auth in a paginated loop
+    const authUsers = await getAllSupabaseUsers(adminClient);
+    
+    // Create a map of userId -> { email, fullName }
+    const userMap = {};
+    authUsers.forEach(u => {
+      userMap[u.id] = {
+        email: u.email,
+        fullName: u.user_metadata?.full_name || u.email?.split("@")[0] || "Subscriber"
+      };
+    });
+
+    // 2. Prepare draw results emails for all active profiles
+    const drawResultsPromises = activeProfiles
+      .map(p => {
+        const email = userMap[p.id]?.email;
+        if (!email) return null;
+        
+        const fullName = p.full_name || userMap[p.id]?.fullName || "Subscriber";
+        return sendTransactionalEmail(p.id, {
+          type: "draw_results",
+          toEmail: email,
+          toName: fullName,
+          subject: `CauseLoop Draw Results: ${getMonthName(draw.month)} ${draw.year}`,
+          htmlContent: getDrawResultsHtml(fullName, draw.month, draw.year, winningNumbers),
+          metadata: { draw_id: draw.id }
+        });
+      })
+      .filter(Boolean);
+
+    // 3. Prepare winner alert emails for all winners (3+ matches)
+    const winnerAlertPromises = winners
+      .map(w => {
+        const email = userMap[w.userId]?.email;
+        if (!email) return null;
+
+        const fullName = userMap[w.userId]?.fullName || "Winner";
+        return sendTransactionalEmail(w.userId, {
+          type: "winner_alert",
+          toEmail: email,
+          toName: fullName,
+          subject: "Congratulations! You won in the CauseLoop Draw!",
+          htmlContent: getWinnerAlertHtml(fullName, draw.month, draw.year, w.match_count, w.prize_amount),
+          metadata: { draw_id: draw.id, prize_amount: w.prize_amount, match_count: w.match_count }
+        });
+      })
+      .filter(Boolean);
+
+    // Send all emails in parallel using Promise.allSettled
+    await Promise.allSettled([...drawResultsPromises, ...winnerAlertPromises]);
+    console.log(`[Draw Emails Sent] Dispatched draw results to ${drawResultsPromises.length} participants and winner alerts to ${winnerAlertPromises.length} winners.`);
+  } catch (err) {
+    console.error("[Draw Emails Background] Error dispatching emails:", err);
+  }
+}
+
+function getMonthName(monthNum) {
+  const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  return months[monthNum - 1] || "Unknown";
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
+import { sendTransactionalEmail, getSubscriptionCancelledLapsedHtml } from "@/lib/brevo";
 
 export async function GET(request) {
   try {
@@ -45,6 +46,12 @@ export async function GET(request) {
     }
 
     console.log(`[Cron Success]: Marked ${expiredIds.length} subscriptions as lapsed`);
+
+    // Trigger emails asynchronously in the background so it doesn't block the cron HTTP response
+    triggerCronLapsedEmails(expiredSubs).catch(err => {
+      console.error("[Cron Lapsed] Error triggering lapsed subscription emails:", err);
+    });
+
     return NextResponse.json({
       message: "Successfully processed lapsed subscriptions.",
       processed: expiredIds.length,
@@ -55,4 +62,46 @@ export async function GET(request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
+
+// ── Cron Async Email Notification Trigger Helper ──
+
+async function triggerCronLapsedEmails(expiredSubs) {
+  try {
+    const supabase = createAdminClient();
+    
+    const emailPromises = expiredSubs.map(async (sub) => {
+      try {
+        const { data: { user }, error: userErr } = await supabase.auth.admin.getUserById(sub.user_id);
+        if (userErr || !user) {
+          console.error(`[Cron Lapsed] User not found for ID ${sub.user_id}:`, userErr);
+          return;
+        }
+
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("full_name")
+          .eq("id", sub.user_id)
+          .maybeSingle();
+
+        const name = profile?.full_name || user.user_metadata?.full_name || user.email.split("@")[0] || "Subscriber";
+
+        await sendTransactionalEmail(sub.user_id, {
+          type: "subscription_cancelled_lapsed",
+          toEmail: user.email,
+          toName: name,
+          subject: "Your CauseLoop Subscription Has Ended",
+          htmlContent: getSubscriptionCancelledLapsedHtml(name)
+        });
+      } catch (subErr) {
+        console.error(`[Cron Lapsed] Failed to send email to user ${sub.user_id}:`, subErr);
+      }
+    });
+
+    await Promise.allSettled(emailPromises);
+    console.log(`[Cron Lapsed Emails] Dispatched ${expiredSubs.length} lapsed subscription notifications.`);
+  } catch (err) {
+    console.error("[Cron Lapsed Emails] Error in batch dispatcher:", err);
+  }
+}
+
 export const dynamic = "force-dynamic";
