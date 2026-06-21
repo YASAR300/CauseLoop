@@ -58,11 +58,17 @@ export async function GET(request) {
       .select("*, draws(*), profiles(*)")
       .order("created_at", { ascending: false });
 
+    // Fetch all draw entries
+    const { data: drawEntries } = await adminClient
+      .from("draw_entries")
+      .select("*");
+
     return NextResponse.json({
       profiles,
       charities,
       draws,
-      winners
+      winners,
+      drawEntries
     });
   } catch (err) {
     console.error("[Admin GET Error]:", err);

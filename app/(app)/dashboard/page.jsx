@@ -125,6 +125,7 @@ export default function DashboardPage() {
   const [adminCharities, setAdminCharities] = useState([]);
   const [adminDraws, setAdminDraws] = useState([]);
   const [adminWinners, setAdminWinners] = useState([]);
+  const [adminDrawEntries, setAdminDrawEntries] = useState([]);
 
   // Admin User CRUD modal
   const [selectedUserScores, setSelectedUserScores] = useState(null);
@@ -143,6 +144,7 @@ export default function DashboardPage() {
   const [drawLogic, setDrawLogic] = useState("random");
   const [drawSimulating, setDrawSimulating] = useState(false);
   const [simulationResults, setSimulationResults] = useState(null);
+  const [selectedDraw, setSelectedDraw] = useState(null);
 
   // Toast Trigger
   const triggerToast = (msg, type = "success") => {
@@ -160,17 +162,58 @@ export default function DashboardPage() {
         setAdminCharities(data.charities || []);
         setAdminDraws(data.draws || []);
         setAdminWinners(data.winners || []);
+        setAdminDrawEntries(data.drawEntries || []);
       }
     } catch (err) {
       console.error("Error loading admin datasets:", err);
     }
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally stable — setters are stable references
+
+  const fetchDrawDetails = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/admin/draws?month=${drawMonth}&year=${drawYear}`);
+      if (res.ok) {
+        const data = await res.json();
+        const drawRow = data.draws?.find(d => d.draw_type === "five_match") || null;
+        setSelectedDraw(drawRow);
+        setSimulationResults(drawRow?.latest_simulation || null);
+        if (drawRow) {
+          setDrawLogic(drawRow.logic_type);
+        } else {
+          // No draw found — reset logic to default so dropdown is unlocked
+          setDrawLogic("random");
+        }
+      } else {
+        setSelectedDraw(null);
+        setSimulationResults(null);
+        setDrawLogic("random");
+      }
+    } catch (err) {
+      console.error("Error fetching draw details:", err);
+      setSelectedDraw(null);
+      setSimulationResults(null);
+    }
+  }, [drawMonth, drawYear]);
+
+  // When month/year changes, immediately clear stale draw state while API re-fetches
+  useEffect(() => {
+    setSelectedDraw(null);
+    setSimulationResults(null);
+  }, [drawMonth, drawYear]);
+
+  useEffect(() => {
+    if (activeTab === "admin" && adminTab === "draws" && drawMonth && drawYear) {
+      fetchDrawDetails();
+    }
+  }, [activeTab, adminTab, drawMonth, drawYear, fetchDrawDetails]);
 
   // Primary Fetch logic
   const fetchData = useCallback(async (currentUser) => {
     const supabase = createClient();
     const uid = currentUser?.id || user?.id;
     if (!uid) return;
+    // Note: fetchAdminData is called separately below to avoid circular dep
 
     try {
       // 1. Fetch Profile
@@ -241,7 +284,9 @@ export default function DashboardPage() {
     } catch (err) {
       console.error("Error loading dashboard data:", err);
     }
-  }, [user, fetchAdminData]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]); // stable: only re-create when user identity changes, not on every render
+
 
   useEffect(() => {
     const supabase = createClient();
@@ -758,102 +803,106 @@ export default function DashboardPage() {
     }
   };
 
-  // Admin User: Simulate and Calculate Draws logic
-  const handleRunSimulation = () => {
-    setDrawSimulating(true);
-    setSimulationResults(null);
-
-    setTimeout(() => {
-      const winningNums = [];
-      while (winningNums.length < 5) {
-        const num = Math.floor(Math.random() * 45) + 1;
-        if (!winningNums.includes(num)) {
-          winningNums.push(num);
-        }
-      }
-      winningNums.sort((a, b) => a - b);
-
-      const activeSubs = adminProfiles.filter(p => p.subscriptions?.some(s => s.status === "active"));
-      const totalPrizePool = activeSubs.length * 12.00 * 0.40;
-
-      const results = {
-        month: parseInt(drawMonth),
-        year: parseInt(drawYear),
-        logic_type: drawLogic,
-        winning_numbers: winningNums,
-        total_subscribers: activeSubs.length,
-        prize_pool_amount: totalPrizePool,
-        winners: []
-      };
-
-      activeSubs.forEach(u => {
-        const userNums = (u.scores || []).map(s => s.score_value);
-        if (userNums.length > 0) {
-          const matches = userNums.filter(n => winningNums.includes(n));
-          if (matches.length >= 3) {
-            results.winners.push({
-              user_id: u.id,
-              full_name: u.full_name || u.email || "Unnamed",
-              numbers_played: userNums,
-              match_count: matches.length,
-              prize_amount: matches.length === 5 ? (totalPrizePool * 0.40) : (matches.length === 4 ? (totalPrizePool * 0.35) : (totalPrizePool * 0.25))
-            });
-          }
-        }
+  // Admin User: Create a draft draw
+  const handleCreateDrawDraft = async () => {
+    try {
+      const res = await fetch("/api/admin/draws", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ month: drawMonth, year: drawYear, logicType: drawLogic })
       });
-
-      setSimulationResults(results);
-      setDrawSimulating(false);
-      triggerToast("Draw simulation completed! Review details below.");
-    }, 1500);
+      const data = await res.json();
+      if (res.ok) {
+        triggerToast("Draft draw initialized successfully!");
+        fetchDrawDetails();
+        fetchAdminData();
+      } else {
+        triggerToast(data.error || "Failed to initialize draw", "error");
+      }
+    } catch (err) {
+      console.error(err);
+      triggerToast("Server connection error", "error");
+    }
   };
 
-  // Admin User: Publish simulated draw results
+  // Admin User: Save selected draw logic strategy
+  const handleUpdateDrawStrategy = async () => {
+    if (!selectedDraw) return;
+    try {
+      const res = await fetch("/api/admin/draws", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ drawId: selectedDraw.id, logicType: drawLogic })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        triggerToast("Draw strategy updated successfully!");
+        fetchDrawDetails();
+        fetchAdminData();
+      } else {
+        triggerToast(data.error || "Failed to update strategy", "error");
+      }
+    } catch (err) {
+      console.error(err);
+      triggerToast("Server connection error", "error");
+    }
+  };
+
+  // Admin User: Simulate and Calculate Draws logic (backend API call)
+  const handleRunSimulation = async () => {
+    if (!selectedDraw) return;
+    setDrawSimulating(true);
+    try {
+      const res = await fetch("/api/admin/draws/simulate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ drawId: selectedDraw.id })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        triggerToast("Simulation executed successfully!");
+        // Immediately update UI from API response — don't wait for a re-fetch
+        setSimulationResults(data.simulation || null);
+        setSelectedDraw(prev => prev ? { ...prev, status: "simulated" } : prev);
+        // Also refresh in background for full consistency
+        fetchDrawDetails();
+        fetchAdminData();
+      } else {
+        triggerToast(data.error || "Failed to run simulation", "error");
+        console.error("[Simulate Error]", data.error);
+      }
+    } catch (err) {
+      console.error(err);
+      triggerToast("Server connection error", "error");
+    } finally {
+      setDrawSimulating(false);
+    }
+  };
+
+  // Admin User: Publish simulated draw results (backend API call)
   const handlePublishDraw = async () => {
-    if (!simulationResults) return;
-
-    const supabase = createClient();
-    const { data: drawRow, error: drawErr } = await supabase
-      .from("draws")
-      .insert({
-        month: simulationResults.month,
-        year: simulationResults.year,
-        draw_type: "five_match",
-        logic_type: simulationResults.logic_type,
-        status: "published",
-        winning_numbers: simulationResults.winning_numbers,
-        prize_pool_amount: simulationResults.prize_pool_amount,
-        jackpot_rollover_amount: simulationResults.winners.some(w => w.match_count === 5) ? 0.00 : (simulationResults.prize_pool_amount * 0.40)
-      })
-      .select()
-      .single();
-
-    if (drawErr) {
-      triggerToast("Publishing draw failed: " + drawErr.message, "error");
-      return;
-    }
-
-    for (const w of simulationResults.winners) {
-      await supabase.from("draw_entries").insert({
-        draw_id: drawRow.id,
-        user_id: w.user_id,
-        numbers_played: w.numbers_played,
-        match_count: w.match_count,
-        prize_amount: w.prize_amount
+    if (!selectedDraw || !simulationResults) return;
+    if (!window.confirm("Are you sure you want to PUBLISH this draw? This will lock in the winning numbers and write live winner claims. This action is ONE-WAY and cannot be undone!")) return;
+    
+    try {
+      const res = await fetch("/api/admin/draws/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ drawId: selectedDraw.id, simulationId: simulationResults.id })
       });
-
-      await supabase.from("winners").insert({
-        draw_id: drawRow.id,
-        user_id: w.user_id,
-        verification_status: "pending",
-        payment_status: "pending"
-      });
+      const data = await res.json();
+      if (res.ok) {
+        triggerToast("Draw published successfully! Winning claims are active.", "success");
+        fetchDrawDetails();
+        fetchAdminData();
+        fetchData(); // refresh user side draws list
+      } else {
+        triggerToast(data.error || "Failed to publish draw", "error");
+      }
+    } catch (err) {
+      console.error(err);
+      triggerToast("Server connection error", "error");
     }
-
-    triggerToast(`Published draw results for ${simulationResults.month}/${simulationResults.year}!`);
-    setSimulationResults(null);
-    fetchAdminData();
-    fetchData();
   };
 
   const userEmail = user?.email || "";
@@ -2221,14 +2270,18 @@ export default function DashboardPage() {
                   {/* ADMIN SUB-TAB C: PRIZE DRAWS ENGINE */}
                   {adminTab === "draws" && (
                     <div className="bg-[#141414] border border-[#222] rounded-lg p-6 space-y-6 shadow-xl">
-                      <h3 className="text-[13px] font-bold text-white border-b border-[#222] pb-2">Configure & Execute Draw Simulations</h3>
+                      <div className="border-b border-[#222] pb-3">
+                        <h3 className="text-[14px] font-bold text-white">Configure & Execute Monthly Prize Draw</h3>
+                        <p className="text-[11.5px] text-zinc-500 mt-1">Initialize draft draws, run sandboxed simulations, and publish final results.</p>
+                      </div>
 
+                      {/* Cadence Selection */}
                       <div className="grid sm:grid-cols-3 gap-4 items-end bg-zinc-950/30 p-4 border border-[#222] rounded-lg">
                         <div className="space-y-1.5">
-                          <label className="text-[11px] text-zinc-400 font-medium">Draw cadence (Month)</label>
+                          <label className="text-[11px] text-zinc-400 font-medium">Draw Month</label>
                           <select 
                             value={drawMonth} 
-                            onChange={(e) => setDrawMonth(e.target.value)}
+                            onChange={(e) => setDrawMonth(parseInt(e.target.value, 10))}
                             className="w-full h-8 px-2 bg-zinc-950 border border-zinc-800 rounded text-[12px] text-white focus:outline-none"
                           >
                             {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <option key={m} value={m}>{m}</option>)}
@@ -2236,85 +2289,190 @@ export default function DashboardPage() {
                         </div>
 
                         <div className="space-y-1.5">
-                          <label className="text-[11px] text-zinc-400 font-medium">Cadence (Year)</label>
+                          <label className="text-[11px] text-zinc-400 font-medium">Draw Year</label>
                           <input 
                             type="number" 
                             value={drawYear} 
-                            onChange={(e) => setDrawYear(e.target.value)}
+                            onChange={(e) => setDrawYear(parseInt(e.target.value, 10))}
                             className="w-full h-8 px-2 bg-zinc-950 border border-zinc-800 rounded text-[12px] text-white focus:outline-none"
                           />
                         </div>
 
                         <div className="space-y-1.5">
-                          <label className="text-[11px] text-zinc-400 font-medium">Algorithm Weighted Logic</label>
+                          <label className="text-[11px] text-zinc-400 font-medium">Algorithm Selection</label>
                           <select 
                             value={drawLogic} 
                             onChange={(e) => setDrawLogic(e.target.value)}
-                            className="w-full h-8 px-2 bg-zinc-950 border border-zinc-800 rounded text-[12px] text-white focus:outline-none"
+                            disabled={selectedDraw?.status === "published"}
+                            className="w-full h-8 px-2 bg-zinc-950 border border-zinc-800 rounded text-[12px] text-white focus:outline-none disabled:opacity-50"
                           >
-                            <option value="random">Random Generation</option>
-                            <option value="algorithmic">Algorithmic Weighted Frequency</option>
+                            <option value="random">Random Generation (Unbiased)</option>
+                            <option value="algorithmic">Algorithmic Weighted (Frequency-Based)</option>
                           </select>
                         </div>
                       </div>
 
-                      <div className="flex justify-end">
-                        <button
-                          onClick={handleRunSimulation}
-                          disabled={drawSimulating}
-                          className="h-8 px-4 bg-emerald-500 hover:bg-emerald-400 text-black text-[11.5px] font-extrabold rounded flex items-center gap-1.5 disabled:opacity-50 shadow-md"
-                        >
-                          <Play size={11} fill="currentColor" />
-                          {drawSimulating ? "Simulating draw..." : "Execute Simulation"}
-                        </button>
-                      </div>
-
-                      {/* Simulation Results Display */}
-                      {simulationResults && (
-                        <div className="space-y-4 border border-emerald-500/20 bg-emerald-500/5 rounded-lg p-5 animate-scaleUp">
-                          <div className="flex justify-between items-start border-b border-emerald-500/10 pb-3">
+                      {/* Draw State Information */}
+                      {!selectedDraw ? (
+                        <div className="bg-zinc-900/30 border border-[#222] rounded-lg p-5 flex flex-col sm:flex-row justify-between items-center gap-4">
+                          <div>
+                            <h4 className="text-[13px] font-bold text-white flex items-center gap-1.5">
+                              <span className="w-2.5 h-2.5 rounded-full bg-zinc-500" />
+                              Status: Not Initialized
+                            </h4>
+                            <p className="text-[11px] text-zinc-500 mt-1">No draw has been configured for {drawMonth}/{drawYear} yet.</p>
+                          </div>
+                          <button
+                            onClick={handleCreateDrawDraft}
+                            className="h-8 px-4 bg-indigo-600 hover:bg-indigo-500 text-white text-[11.5px] font-extrabold rounded shadow-md transition-colors"
+                          >
+                            Initialize Draft Draw
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-6">
+                          {/* Draw Header */}
+                          <div className="bg-zinc-900/30 border border-[#222] rounded-lg p-4 flex flex-col sm:flex-row justify-between items-center gap-4">
                             <div>
-                              <h4 className="text-[13px] font-bold text-white">Simulated Winning Numbers</h4>
-                              <p className="text-[11px] text-zinc-400 mt-0.5 font-mono">Month: {simulationResults.month}/{simulationResults.year} | Engine: {simulationResults.logic_type}</p>
+                              <h4 className="text-[13.5px] font-bold text-white flex items-center gap-2">
+                                <span className={`w-2.5 h-2.5 rounded-full ${
+                                  selectedDraw.status === "published" ? "bg-emerald-500" :
+                                  selectedDraw.status === "simulated" ? "bg-amber-500" : "bg-blue-500"
+                                }`} />
+                                Status: <span className="capitalize font-mono">{selectedDraw.status}</span>
+                              </h4>
+                              <p className="text-[11px] text-zinc-400 mt-1 font-mono">Draw ID: {selectedDraw.id}</p>
+                              <p className="text-[11px] text-zinc-500 mt-0.5">Strategy: <span className="font-mono text-zinc-300">{selectedDraw.logic_type}</span></p>
                             </div>
-                            <div className="flex items-center gap-1.5 font-mono">
-                              {simulationResults.winning_numbers.map((n, i) => (
-                                <span key={i} className="w-8 h-8 rounded-full bg-[#3ecf8e] text-black font-extrabold text-[12px] flex items-center justify-center">
-                                  {n}
-                                </span>
-                              ))}
+                            
+                            <div className="flex gap-2">
+                              {selectedDraw.status !== "published" && (
+                                <>
+                                  {drawLogic !== selectedDraw.logic_type && (
+                                    <button
+                                      onClick={handleUpdateDrawStrategy}
+                                      className="h-8 px-3 bg-zinc-800 hover:bg-zinc-700 text-white text-[11px] font-bold rounded border border-zinc-700 transition-colors"
+                                    >
+                                      Save Strategy
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={handleRunSimulation}
+                                    disabled={drawSimulating}
+                                    className="h-8 px-4 bg-emerald-500 hover:bg-emerald-400 text-black text-[11.5px] font-extrabold rounded flex items-center gap-1.5 disabled:opacity-50 shadow-md transition-colors"
+                                  >
+                                    <Play size={11} fill="currentColor" />
+                                    {drawSimulating ? "Simulating..." : "Run Simulation"}
+                                  </button>
+                                </>
+                              )}
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-2 gap-4 text-[11px] font-mono text-zinc-400">
-                            <div>Subscribers Checked: <span className="text-white font-bold">{simulationResults.total_subscribers}</span></div>
-                            <div>Accumulated Pool: <span className="text-[#3ecf8e] font-bold">£{simulationResults.prize_pool_amount.toFixed(2)}</span></div>
-                          </div>
+                          {/* Simulation Result Area */}
+                          {selectedDraw.status !== "published" && simulationResults && (
+                            <div className="border border-emerald-500/20 bg-emerald-500/5 rounded-lg p-5 space-y-4 animate-scaleUp">
+                              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-emerald-500/10 pb-3 gap-3">
+                                <div>
+                                  <h4 className="text-[13px] font-bold text-white">Projected Simulation Output</h4>
+                                  <p className="text-[10px] text-zinc-400 mt-0.5 font-mono">Simulation ID: {simulationResults.id}</p>
+                                </div>
+                                <div className="flex items-center gap-1.5 font-mono">
+                                  {simulationResults.winning_numbers?.map((n, i) => (
+                                    <span key={i} className="w-8 h-8 rounded-full bg-[#3ecf8e] text-black font-extrabold text-[12px] flex items-center justify-center shadow-md">
+                                      {n}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
 
-                          {simulationResults.winners.length > 0 ? (
-                            <div className="space-y-2 pt-2">
-                              <h5 className="text-[12px] font-bold text-white">Matching Winners</h5>
-                              <div className="divide-y divide-zinc-900 border border-zinc-900 rounded-lg overflow-hidden bg-zinc-950/20 text-[11.5px] font-mono">
-                                {simulationResults.winners.map((w, idx) => (
-                                  <div key={idx} className="p-2.5 flex justify-between">
-                                    <span>{w.full_name} (Matches: {w.match_count})</span>
-                                    <span className="text-[#3ecf8e]">£{w.prize_amount.toFixed(2)}</span>
+                              <div className="grid grid-cols-3 gap-4 text-[11px] font-mono text-zinc-400">
+                                <div>Active Subs: <span className="text-white font-bold">{adminProfiles.filter(p => p.subscriptions?.some(s => s.status === "active")).length}</span></div>
+                                <div>Total Pool: <span className="text-[#3ecf8e] font-bold">£{parseFloat(simulationResults.prize_pool_amount).toFixed(2)}</span></div>
+                                <div>Jackpot Rollover: <span className="text-[#3ecf8e] font-bold">£{parseFloat(simulationResults.jackpot_rollover_amount).toFixed(2)}</span></div>
+                              </div>
+
+                              {/* Projected Winners List */}
+                              {simulationResults.projected_winners && simulationResults.projected_winners.filter(w => w.match_count >= 3).length > 0 ? (
+                                <div className="space-y-2 pt-2">
+                                  <h5 className="text-[11.5px] font-bold text-white uppercase tracking-wider">Projected Winners (&ge; 3 Matches)</h5>
+                                  <div className="divide-y divide-zinc-900 border border-zinc-900 rounded-lg overflow-hidden bg-zinc-950/20 text-[11.5px] font-mono max-h-[160px] overflow-y-auto">
+                                    {simulationResults.projected_winners.filter(w => w.match_count >= 3).map((w, idx) => (
+                                      <div key={idx} className="p-2.5 flex justify-between items-center hover:bg-zinc-950/30">
+                                        <span>{w.full_name} (Matches: {w.match_count})</span>
+                                        <span className="text-[#3ecf8e] font-bold">£{parseFloat(w.prize_amount).toFixed(2)}</span>
+                                      </div>
+                                    ))}
                                   </div>
-                                ))}
+                                </div>
+                              ) : (
+                                <p className="text-[11.5px] text-zinc-500 italic bg-zinc-950/20 p-3 rounded-lg border border-zinc-900">No simulated users matched 3+ numbers. The 5-match jackpot pool will roll over to the next month.</p>
+                              )}
+
+                              <div className="flex justify-end pt-2 border-t border-emerald-500/10">
+                                <button
+                                  onClick={handlePublishDraw}
+                                  className="h-8 px-4 bg-[#3ecf8e] text-black hover:bg-[#32b37a] text-[11.5px] font-bold rounded shadow-md transition-colors"
+                                >
+                                  Publish Draw Results (Live)
+                                </button>
                               </div>
                             </div>
-                          ) : (
-                            <p className="text-[11.5px] text-zinc-500 italic">No users matched 3+ numbers. Jackpot rolls over.</p>
                           )}
 
-                          <div className="flex justify-end pt-2.5">
-                            <button
-                              onClick={handlePublishDraw}
-                              className="h-8 px-4 bg-[#3ecf8e] text-black hover:bg-[#32b37a] text-[11.5px] font-bold rounded"
-                            >
-                              Publish Draw Results
-                            </button>
-                          </div>
+                          {/* Published State Results */}
+                          {selectedDraw.status === "published" && (
+                            <div className="border border-indigo-500/20 bg-indigo-500/5 rounded-lg p-5 space-y-4">
+                              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-indigo-500/10 pb-3 gap-3">
+                                <div>
+                                  <h4 className="text-[13px] font-bold text-white flex items-center gap-1.5">
+                                    <Lock size={12} className="text-indigo-400" />
+                                    Locked Winning Numbers
+                                  </h4>
+                                  <p className="text-[11px] text-zinc-500 mt-0.5">This draw has been published. Results are final.</p>
+                                </div>
+                                <div className="flex items-center gap-1.5 font-mono">
+                                  {selectedDraw.winning_numbers?.map((n, i) => (
+                                    <span key={i} className="w-8 h-8 rounded-full bg-indigo-600 text-white font-extrabold text-[12px] flex items-center justify-center shadow-md">
+                                      {n}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-4 text-[11px] font-mono text-zinc-400">
+                                <div>Authoritative Prize Pool: <span className="text-white font-bold">£{parseFloat(selectedDraw.prize_pool_amount).toFixed(2)}</span></div>
+                                <div>Jackpot Rollover: <span className="text-indigo-400 font-bold">£{parseFloat(selectedDraw.jackpot_rollover_amount).toFixed(2)}</span></div>
+                              </div>
+
+                              {/* Actual Winners */}
+                              <div className="space-y-2 pt-2">
+                                <h5 className="text-[11.5px] font-bold text-white uppercase tracking-wider">Official Winners</h5>
+                                {adminWinners.filter(w => w.draw_id === selectedDraw.id).length > 0 ? (
+                                  <div className="divide-y divide-zinc-900 border border-zinc-900 rounded-lg overflow-hidden bg-zinc-950/20 text-[11.5px] font-mono max-h-[200px] overflow-y-auto">
+                                    {adminWinners.filter(w => w.draw_id === selectedDraw.id).map((w, idx) => {
+                                      const entry = adminDrawEntries.find(e => e.draw_id === w.draw_id && e.user_id === w.user_id);
+                                      const matches = entry ? entry.match_count : 0;
+                                      const prize = entry ? parseFloat(entry.prize_amount).toFixed(2) : "0.00";
+                                      
+                                      return (
+                                        <div key={idx} className="p-2.5 flex justify-between items-center hover:bg-zinc-950/30">
+                                          <div>
+                                            <p className="text-white font-sans font-bold">{w.profiles?.full_name || w.profiles?.email}</p>
+                                            <p className="text-[10px] text-zinc-500">Matches: {matches} · Claim: {w.verification_status} · Payout: {w.payment_status}</p>
+                                          </div>
+                                          <span className="text-indigo-400 font-bold">£{prize}</span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                ) : (
+                                  <p className="text-[11.5px] text-zinc-500 italic bg-zinc-950/20 p-3 rounded-lg border border-zinc-900">No winners for this draw period. Rollover applied.</p>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
                         </div>
                       )}
                     </div>
