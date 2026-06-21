@@ -6,6 +6,92 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Heart, Search, DollarSign, ArrowUpRight, HelpCircle, CheckCircle2, ChevronRight, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
+function CharitiesSkeleton() {
+  return (
+    <div className="min-h-screen bg-[#070709] text-zinc-200 font-sans relative overflow-x-hidden">
+      {/* Background radial glowing effects */}
+      <div className="absolute top-0 right-1/4 w-[500px] h-[500px] bg-[#8644FF]/5 rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute top-1/2 left-1/4 w-[400px] h-[400px] bg-rose-500/5 rounded-full blur-[100px] pointer-events-none" />
+
+      {/* Header bar */}
+      <nav className="h-[64px] bg-[#0c0c0e]/80 backdrop-blur-md border-b border-zinc-900 flex items-center px-6 md:px-12 justify-between">
+        <div className="flex items-center gap-2.5">
+          <svg width={22} height={22} viewBox="0 0 48 48" fill="none">
+            <defs>
+              <linearGradient id="nav-logo-grad-sk" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#5227FF" />
+                <stop offset="100%" stopColor="#8644FF" />
+              </linearGradient>
+            </defs>
+            <path
+              fill="url(#nav-logo-grad-sk)"
+              fillRule="evenodd"
+              d="M12 30.99V36L-.01 23.99l2.516-2.499zM17.01 36H12l12.011 12.01 2.506-2.505zm28.487-9.497L48 24 24 0l-2.503 2.503L30.98 12h-5.732l-6.62-6.614-2.506 2.503 4.122 4.122h-2.869v18.625H36V27.77l4.122 4.122 2.503-2.506L36 22.747v-5.732zM13.253 10.747l-2.503 2.506 2.686 2.686 2.503-2.506zm21.314 21.314-2.495 2.503 2.686 2.686 2.506-2.503zM7.878 16.121l-2.503 2.504L12 25.253v-5.012zM27.756 36h-5.009l6.628 6.625 2.503-2.503z"
+              clipRule="evenodd"
+            />
+          </svg>
+          <span className="font-extrabold text-[15.5px] text-white tracking-wide">CauseLoop</span>
+        </div>
+
+        <div className="flex items-center gap-6">
+          <span className="text-[12.5px] font-bold text-white border-b-2 border-[#8644FF]/50 pb-1">Charities</span>
+          <span className="text-[12.5px] font-medium text-zinc-400">Pricing</span>
+          <div className="h-8.5 px-4 bg-zinc-800 text-transparent text-[12px] font-bold rounded-xl flex items-center justify-center animate-pulse">
+            Dashboard
+          </div>
+        </div>
+      </nav>
+
+      {/* Directory Title / Search layout */}
+      <header className="max-w-[1000px] mx-auto px-6 pt-12 md:pt-16 pb-8 space-y-6 text-center animate-pulse">
+        <div className="space-y-4 flex flex-col items-center">
+          <span className="h-6 w-36 bg-zinc-800/80 border border-zinc-700/50 rounded-full"></span>
+          <div className="h-10 bg-zinc-800 rounded w-2/3 md:w-1/2 pt-2"></div>
+          <div className="h-4 bg-zinc-800/60 rounded w-5/6 md:w-1/3 pt-1"></div>
+        </div>
+
+        {/* Directory Controls */}
+        <div className="flex flex-col md:flex-row gap-4 items-center justify-between bg-[#0e0e12] border border-zinc-900 rounded-2xl p-4 max-w-2xl mx-auto shadow-2xl">
+          <div className="w-full h-10 bg-zinc-950 border border-zinc-900 rounded-xl"></div>
+          <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="h-7 w-16 bg-zinc-950 border border-zinc-900 rounded-full"></div>
+            ))}
+          </div>
+        </div>
+      </header>
+
+      {/* Directory Grid */}
+      <section className="max-w-[1000px] mx-auto px-6 pb-20">
+        <div className="grid md:grid-cols-2 gap-6">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="bg-[#0e0e12] border border-zinc-900 rounded-3xl p-6 flex flex-col justify-between shadow-xl animate-pulse">
+              <div className="space-y-4">
+                <div className="flex items-start gap-4">
+                  <div className="w-16 h-16 rounded-2xl bg-zinc-800 shrink-0"></div>
+                  <div className="space-y-2 flex-1 pt-1">
+                    <div className="h-4 bg-zinc-800 rounded w-3/4"></div>
+                    <div className="h-3 bg-zinc-800/60 rounded w-1/4"></div>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <div className="h-3 bg-zinc-800/70 rounded"></div>
+                  <div className="h-3 bg-zinc-800/70 rounded"></div>
+                  <div className="h-3 bg-zinc-800/40 rounded w-5/6"></div>
+                </div>
+              </div>
+              <div className="pt-5 border-t border-zinc-900 mt-6 flex items-center justify-between">
+                <div className="h-4 bg-zinc-800 rounded w-24"></div>
+                <div className="h-8.5 w-28 bg-zinc-800/60 rounded-xl"></div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function CharitiesDirectoryInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -106,14 +192,7 @@ function CharitiesDirectoryInner() {
   };
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-[#070709] flex items-center justify-center text-white font-sans">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="w-8 h-8 text-[#8644FF] animate-spin" />
-          <p className="text-[13px] text-zinc-400">Loading CauseLoop Directory...</p>
-        </div>
-      </div>
-    );
+    return <CharitiesSkeleton />;
   }
 
   return (
@@ -400,14 +479,7 @@ function CharitiesDirectoryInner() {
 
 export default function PublicCharitiesPage() {
   return (
-    <Suspense fallback={
-      <div className="min-h-screen bg-[#070709] flex items-center justify-center text-white font-sans">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="w-8 h-8 text-[#8644FF] animate-spin" />
-          <p className="text-[13px] text-zinc-400">Loading CauseLoop Directory...</p>
-        </div>
-      </div>
-    }>
+    <Suspense fallback={<CharitiesSkeleton />}>
       <CharitiesDirectoryInner />
     </Suspense>
   );
