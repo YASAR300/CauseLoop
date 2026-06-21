@@ -163,6 +163,29 @@ export async function PATCH(request) {
       return NextResponse.json({ success: true, winner: data });
     }
 
+    if (action === "update_score") {
+      const { scoreId, scoreValue, scoreDate } = body;
+      if (!scoreId) return NextResponse.json({ error: "Missing scoreId" }, { status: 400 });
+      const updates = {};
+      if (scoreValue !== undefined) updates.score_value = parseInt(scoreValue, 10);
+      if (scoreDate) updates.score_date = scoreDate;
+
+      const { data, error } = await adminClient
+        .from("scores")
+        .update(updates)
+        .eq("id", scoreId)
+        .select()
+        .single();
+
+      if (error) {
+        if (error.code === "23505") { // unique user date constraint
+          return NextResponse.json({ error: "The user already has a score logged for this date" }, { status: 409 });
+        }
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      return NextResponse.json({ success: true, score: data });
+    }
+
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
   } catch (err) {
     console.error("[Admin PATCH Error]:", err);

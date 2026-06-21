@@ -40,6 +40,17 @@ import {
   Award
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip as RechartsTooltip,
+  CartesianGrid
+} from "recharts";
 
 // Brand Logo Component matching original dashboard logo styling
 function Logo({ size = 18 }) {
@@ -146,6 +157,27 @@ export default function DashboardPage() {
   const [simulationResults, setSimulationResults] = useState(null);
   const [selectedDraw, setSelectedDraw] = useState(null);
 
+  // Admin User Score Correction States
+  const [editingUserScoreId, setEditingUserScoreId] = useState(null);
+  const [editingUserScoreValue, setEditingUserScoreValue] = useState("");
+  const [editingUserScoreDate, setEditingUserScoreDate] = useState("");
+
+  // Admin Charity Events Editor States
+  const [editingEventsCharity, setEditingEventsCharity] = useState(null);
+  const [newEventName, setNewEventName] = useState("");
+  const [newEventDate, setNewEventDate] = useState("");
+  const [showEventsModal, setShowEventsModal] = useState(false);
+
+  // Admin Winner Claims Filters
+  const [claimVerificationFilter, setClaimVerificationFilter] = useState("all");
+  const [claimPaymentFilter, setClaimPaymentFilter] = useState("all");
+
+  // Recharts Mounting Protection
+  const [isMounted, setIsMounted] = useState(false);
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   // Toast Trigger
   const triggerToast = (msg, type = "success") => {
     setToastMessage(msg);
@@ -203,10 +235,10 @@ export default function DashboardPage() {
   }, [drawMonth, drawYear]);
 
   useEffect(() => {
-    if (activeTab === "admin" && adminTab === "draws" && drawMonth && drawYear) {
+    if (activeTab === "admin_draws" && drawMonth && drawYear) {
       fetchDrawDetails();
     }
-  }, [activeTab, adminTab, drawMonth, drawYear, fetchDrawDetails]);
+  }, [activeTab, drawMonth, drawYear, fetchDrawDetails]);
 
   // Primary Fetch logic
   const fetchData = useCallback(async (currentUser) => {
@@ -375,12 +407,18 @@ export default function DashboardPage() {
   }, []);
 
   const commandItems = [
-    { id: "overview", label: "My Dashboard", category: "Navigation", icon: Home, action: () => { setActiveTab("overview"); setShowSearchModal(false); } },
-    { id: "scores", label: "Golf Scorecard", category: "Navigation", icon: Table, action: () => { setActiveTab("scores"); setShowSearchModal(false); } },
-    { id: "charities", label: "Charity Partners", category: "Navigation", icon: Heart, action: () => { setActiveTab("charities"); setShowSearchModal(false); } },
-    { id: "draws", label: "Prize Draws", category: "Navigation", icon: Trophy, action: () => { setActiveTab("draws"); setShowSearchModal(false); } },
+    { id: "overview", label: "Overview", category: "Navigation", icon: Home, action: () => { setActiveTab("overview"); setShowSearchModal(false); } },
+    { id: "scores", label: "My Scores", category: "Navigation", icon: Table, action: () => { setActiveTab("scores"); setShowSearchModal(false); } },
+    { id: "charity", label: "My Charity", category: "Navigation", icon: Heart, action: () => { setActiveTab("charity"); setShowSearchModal(false); } },
+    { id: "draws_winnings", label: "Draws & Winnings", category: "Navigation", icon: Trophy, action: () => { setActiveTab("draws_winnings"); setShowSearchModal(false); } },
     { id: "settings", label: "Project Settings", category: "Navigation", icon: Settings, action: () => { setActiveTab("settings"); setShowSearchModal(false); } },
-    ...(profile?.role === "admin" ? [{ id: "admin", label: "Admin Console", category: "Navigation", icon: ShieldCheck, action: () => { setActiveTab("admin"); setShowSearchModal(false); } }] : []),
+    ...(profile?.role === "admin" ? [
+      { id: "admin_users", label: "Users (Admin)", category: "Administration", icon: Users, action: () => { setActiveTab("admin_users"); setShowSearchModal(false); } },
+      { id: "admin_draws", label: "Draws (Admin)", category: "Administration", icon: Trophy, action: () => { setActiveTab("admin_draws"); setShowSearchModal(false); } },
+      { id: "admin_charities", label: "Charities (Admin)", category: "Administration", icon: Heart, action: () => { setActiveTab("admin_charities"); setShowSearchModal(false); } },
+      { id: "admin_winners", label: "Winners (Admin)", category: "Administration", icon: Award, action: () => { setActiveTab("admin_winners"); setShowSearchModal(false); } },
+      { id: "admin_reports", label: "Reports (Admin)", category: "Administration", icon: TrendingUp, action: () => { setActiveTab("admin_reports"); setShowSearchModal(false); } }
+    ] : []),
     { id: "add-score", label: "Log Golf Round", category: "Actions", icon: Plus, action: () => { setShowSearchModal(false); setShowAddScoreModal(true); } },
     ...(subscription?.status !== "active" ? [{ id: "upgrade", label: "Upgrade to Pro", category: "Actions", icon: Sparkles, action: () => { router.push("/subscribe"); setShowSearchModal(false); } }] : []),
     { id: "logout", label: "Sign Out", category: "Actions", icon: LogOut, action: () => { handleLogout(); setShowSearchModal(false); } }
@@ -716,6 +754,87 @@ export default function DashboardPage() {
       }
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  // Admin User: Update score value/date (manual score correction)
+  const handleAdminUpdateScore = async (scoreId) => {
+    const val = parseInt(editingUserScoreValue, 10);
+    if (isNaN(val) || val < 1 || val > 45) {
+      triggerToast("Stableford score must be strictly between 1 and 45.", "error");
+      return;
+    }
+    if (!editingUserScoreDate) {
+      triggerToast("Please select a valid date.", "error");
+      return;
+    }
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update_score",
+          scoreId,
+          scoreValue: val,
+          scoreDate: editingUserScoreDate
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        triggerToast("User score corrected successfully!");
+        setEditingUserScoreId(null);
+        fetchAdminData();
+        // Refresh local view if matching user
+        if (selectedUserScores) {
+          setSelectedUserScores(prev => ({
+            ...prev,
+            scores: prev.scores.map(s => s.id === scoreId ? { ...s, score_value: val, score_date: editingUserScoreDate } : s)
+          }));
+        }
+      } else {
+        triggerToast(data.error || "Failed to correct score", "error");
+      }
+    } catch (e) {
+      console.error(e);
+      triggerToast("Server connection error", "error");
+    }
+  };
+
+  // Admin Charity: Save/update upcoming events JSONB array
+  const handleAdminSaveCharityEvents = async (charityId, updatedEvents) => {
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("charities")
+      .update({ upcoming_events: updatedEvents })
+      .eq("id", charityId);
+
+    if (error) {
+      triggerToast(error.message, "error");
+    } else {
+      triggerToast("Charity events updated successfully!");
+      fetchAdminData();
+      fetchData(); // refresh user side draws list
+      // update local editing state
+      if (editingEventsCharity && editingEventsCharity.id === charityId) {
+        setEditingEventsCharity(prev => ({ ...prev, upcoming_events: updatedEvents }));
+      }
+    }
+  };
+
+  // Admin Charity: Spotlight Toggle
+  const handleAdminToggleFeaturedCharity = async (charityId, currentFeatured) => {
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("charities")
+      .update({ is_featured: !currentFeatured })
+      .eq("id", charityId);
+
+    if (error) {
+      triggerToast(error.message, "error");
+    } else {
+      triggerToast("Charity spotlight toggled successfully!");
+      fetchAdminData();
+      fetchData();
     }
   };
 
@@ -1056,10 +1175,10 @@ export default function DashboardPage() {
             </div>
 
             {[
-              { id: "overview", label: "My Dashboard", icon: Home },
-              { id: "scores", label: "Golf Scorecard", icon: Table },
-              { id: "charities", label: "Charity Partners", icon: Heart },
-              { id: "draws", label: "Prize Draws", icon: Trophy },
+              { id: "overview", label: "Overview", icon: Home },
+              { id: "scores", label: "My Scores", icon: Table },
+              { id: "charity", label: "My Charity", icon: Heart },
+              { id: "draws_winnings", label: "Draws & Winnings", icon: Trophy },
             ].map((item) => {
               const Icon = item.icon;
               const isActive = activeTab === item.id;
@@ -1083,23 +1202,40 @@ export default function DashboardPage() {
               );
             })}
 
-            {/* Admin tab visible if role is admin */}
+            {/* Admin console tabs separated by divider */}
             {userRole === "admin" && (
-              <button
-                onClick={() => setActiveTab("admin")}
-                title="Admin Console"
-                className={`w-9 h-9 rounded flex items-center justify-center relative group transition-all ${
-                  activeTab === "admin"
-                    ? "text-[#3ecf8e] bg-[#1d2c25]"
-                    : "text-zinc-400 hover:text-emerald-400 hover:bg-[#1a1a1f]"
-                }`}
-              >
-                {activeTab === "admin" && <div className="absolute left-0 top-1.5 bottom-1.5 w-[2px] bg-[#3ecf8e] rounded" />}
-                <ShieldCheck size={16} />
-                <span className="absolute left-12 px-2.5 py-1 bg-[#1c1c1e] text-[11px] text-white rounded border border-[#2e2e2e] shadow-xl font-medium tracking-wide whitespace-nowrap opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-100 z-50">
-                  Admin Console
-                </span>
-              </button>
+              <>
+                <div className="w-6 border-t border-zinc-800 my-2 shrink-0" />
+                <span className="text-[9px] text-zinc-500 font-extrabold tracking-widest font-mono shrink-0 mb-1">ADM</span>
+                {[
+                  { id: "admin_users", label: "Users", icon: Users },
+                  { id: "admin_draws", label: "Draws", icon: Trophy },
+                  { id: "admin_charities", label: "Charities", icon: Heart },
+                  { id: "admin_winners", label: "Winners", icon: Award },
+                  { id: "admin_reports", label: "Reports", icon: TrendingUp },
+                ].map((item) => {
+                  const Icon = item.icon;
+                  const isActive = activeTab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => setActiveTab(item.id)}
+                      title={item.label}
+                      className={`w-9 h-9 rounded flex items-center justify-center relative group transition-all ${
+                        isActive
+                          ? "text-[#3ecf8e] bg-[#1d2c25]"
+                          : "text-zinc-400 hover:text-emerald-400 hover:bg-[#1a1a1f]"
+                      }`}
+                    >
+                      {isActive && <div className="absolute left-0 top-1.5 bottom-1.5 w-[2px] bg-[#3ecf8e] rounded" />}
+                      <Icon size={16} />
+                      <span className="absolute left-12 px-2.5 py-1 bg-[#1c1c1e] text-[11px] text-white rounded border border-[#2e2e2e] shadow-xl font-medium tracking-wide whitespace-nowrap opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-100 z-50">
+                        {item.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </>
             )}
           </div>
 
@@ -1147,8 +1283,8 @@ export default function DashboardPage() {
 
               {/* ── Stat Cards ── */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                {/* 1. Subscription */}
-                <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl p-4 flex flex-col gap-3 hover:border-[#2a2a2a] transition-all cursor-default">
+                {/* 1. Subscription Status Card */}
+                <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl p-4 flex flex-col justify-between gap-3 hover:border-[#2a2a2a] transition-all cursor-default">
                   <div className="flex items-center justify-between">
                     <span className="text-[10.5px] text-zinc-500 font-medium">Membership</span>
                     <span className={`text-[9.5px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
@@ -1158,17 +1294,23 @@ export default function DashboardPage() {
                           ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
                           : "bg-zinc-800 text-zinc-500 border border-zinc-700/50"
                     }`}>
-                      {userRole === "admin" ? "Admin" : subscription?.status === "active" ? "Active" : "Free"}
+                      {userRole === "admin" ? "Admin" : subscription?.status === "active" ? "Active" : "Inactive"}
                     </span>
                   </div>
                   <div>
-                    <p className="text-[22px] font-bold text-white capitalize leading-none">{subscription?.plan_type || "No Plan"}</p>
-                    <p className="text-[11px] text-zinc-500 mt-1.5">{subscription?.status === "active" ? "Pro access enabled" : "Free tier"}</p>
+                    <p className="text-[20px] font-bold text-white capitalize leading-none">{subscription?.plan_type || "Free Tier"}</p>
+                    {subscription?.status === "active" && subscription?.current_period_end ? (
+                      <p className="text-[10.5px] text-zinc-400 mt-1.5 font-mono">
+                        Renews: {new Date(subscription.current_period_end).toLocaleDateString("en-GB", { day: 'numeric', month: 'short', year: 'numeric' })}
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-zinc-500 mt-1.5">Free visitor mode</p>
+                    )}
                   </div>
                   <div className="pt-2 border-t border-[#1e1e1e]">
                     {subscription?.status === "active" ? (
-                      <a href="/api/portal" className="text-[11px] text-zinc-400 hover:text-white flex items-center gap-1 transition-colors">
-                        Manage billing <ExternalLink size={9} />
+                      <a href="/api/portal" className="text-[11px] text-[#3ecf8e] hover:text-emerald-400 flex items-center gap-1 transition-colors font-medium">
+                        Stripe Billing Portal <ExternalLink size={10} />
                       </a>
                     ) : (
                       <Link href="/subscribe" className="text-[11px] text-[#3ecf8e] hover:text-emerald-300 flex items-center gap-1 font-medium transition-colors">
@@ -1179,43 +1321,43 @@ export default function DashboardPage() {
                 </div>
 
                 {/* 2. Latest Score */}
-                <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl p-4 flex flex-col gap-3 hover:border-[#2a2a2a] transition-all cursor-default">
+                <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl p-4 flex flex-col justify-between gap-3 hover:border-[#2a2a2a] transition-all cursor-default">
                   <div className="flex items-center justify-between">
                     <span className="text-[10.5px] text-zinc-500 font-medium">Latest Score</span>
                     <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/50 uppercase tracking-wider">Stableford</span>
                   </div>
                   <div>
-                    <p className="text-[22px] font-bold text-white leading-none">
+                    <p className="text-[20px] font-bold text-white leading-none">
                       {scores.length > 0 ? scores[0].score_value : "—"}
                     </p>
                     <p className="text-[11px] text-zinc-500 mt-1.5">{scores.length} of 5 rounds logged</p>
                   </div>
                   <div className="pt-2 border-t border-[#1e1e1e]">
-                    <button onClick={() => setActiveTab("scores")} className="text-[11px] text-[#3ecf8e] hover:text-emerald-300 flex items-center gap-1 font-medium transition-colors">
+                    <button onClick={() => setActiveTab("scores")} className="text-[11px] text-zinc-400 hover:text-white flex items-center gap-1 font-medium transition-colors">
                       View scorecard <ChevronRight size={10} />
                     </button>
                   </div>
                 </div>
 
                 {/* 3. Draw Entry */}
-                <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl p-4 flex flex-col gap-3 hover:border-[#2a2a2a] transition-all cursor-default">
+                <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl p-4 flex flex-col justify-between gap-3 hover:border-[#2a2a2a] transition-all cursor-default">
                   <div className="flex items-center justify-between">
                     <span className="text-[10.5px] text-zinc-500 font-medium">Draw Entry</span>
                     <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/50 uppercase tracking-wider">Monthly</span>
                   </div>
                   <div>
-                    <p className="text-[22px] font-bold text-white leading-none">{scores.length > 0 ? "1" : "0"}</p>
+                    <p className="text-[20px] font-bold text-white leading-none">{scores.length > 0 ? "1" : "0"}</p>
                     <p className="text-[11px] text-zinc-500 mt-1.5">{scores.length > 0 ? "Ticket active · Jul 2026" : "Log scores to enter"}</p>
                   </div>
                   <div className="pt-2 border-t border-[#1e1e1e]">
-                    <button onClick={() => setActiveTab("draws")} className="text-[11px] text-zinc-400 hover:text-white flex items-center gap-1 transition-colors">
+                    <button onClick={() => setActiveTab("draws_winnings")} className="text-[11px] text-zinc-400 hover:text-white flex items-center gap-1 transition-colors">
                       View draw pool <ChevronRight size={10} />
                     </button>
                   </div>
                 </div>
 
                 {/* 4. Winnings */}
-                <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl p-4 flex flex-col gap-3 hover:border-[#2a2a2a] transition-all cursor-default">
+                <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl p-4 flex flex-col justify-between gap-3 hover:border-[#2a2a2a] transition-all cursor-default">
                   <div className="flex items-center justify-between">
                     <span className="text-[10.5px] text-zinc-500 font-medium">Winnings</span>
                     {winners.length > 0 && (
@@ -1223,168 +1365,78 @@ export default function DashboardPage() {
                     )}
                   </div>
                   <div>
-                    <p className="text-[22px] font-bold text-emerald-400 leading-none">
+                    <p className="text-[20px] font-bold text-emerald-400 leading-none">
                       £{winners.reduce((acc, w) => acc + (w.draws?.prize_pool_amount ? 120.00 : 0.00), 0.00).toFixed(2)}
                     </p>
                     <p className="text-[11px] text-zinc-500 mt-1.5">{winners.length} claim{winners.length !== 1 ? "s" : ""} detected</p>
                   </div>
                   <div className="pt-2 border-t border-[#1e1e1e]">
-                    <span className="text-[11px] text-zinc-400">Payout status</span>
+                    <button onClick={() => setActiveTab("draws_winnings")} className="text-[11px] text-zinc-400 hover:text-white flex items-center gap-1 transition-colors">
+                      View claims <ChevronRight size={10} />
+                    </button>
                   </div>
                 </div>
               </div>
 
-              {/* ── Charity Donation Panel ── */}
-              <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl overflow-hidden">
-                {/* Panel Header */}
-                <div className="flex items-center justify-between px-5 py-4 border-b border-[#1e1e1e]">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-6 h-6 rounded-md bg-rose-500/10 border border-rose-500/15 flex items-center justify-center">
-                      <Heart size={12} className="text-rose-400" />
+              {/* ── Quick Glance Panel ── */}
+              <div className="grid md:grid-cols-2 gap-4">
+                {/* Charity Summary Card */}
+                <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl p-5 flex flex-col justify-between gap-4">
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/15 flex items-center justify-center shrink-0">
+                      <Heart size={14} className="text-rose-400" />
                     </div>
                     <div>
-                      <h3 className="text-[13px] font-semibold text-white">Charity Contribution</h3>
-                      <p className="text-[11px] text-zinc-500">Set your monthly donation split</p>
+                      <h3 className="text-[13px] font-semibold text-white">Selected Charity Partner</h3>
+                      {activeCharity ? (
+                        <div className="mt-1.5">
+                          <p className="text-[12.5px] font-bold text-zinc-300">{activeCharity.name}</p>
+                          <p className="text-[11.5px] text-zinc-500 mt-1 line-clamp-2 leading-relaxed">{activeCharity.description}</p>
+                          <p className="text-[11px] text-rose-400 mt-2 font-semibold">Allocating {sliderValue}% of subscription fee</p>
+                        </div>
+                      ) : (
+                        <p className="text-[12px] text-zinc-500 italic mt-1">No charity selected yet. Visit the My Charity tab to select a cause.</p>
+                      )}
                     </div>
                   </div>
                   <button
-                    onClick={() => setActiveTab("charities")}
-                    className="h-7 px-3 bg-transparent border border-[#272727] hover:border-[#333] text-[11px] text-zinc-400 hover:text-white rounded-lg transition-all font-medium"
+                    onClick={() => setActiveTab("charity")}
+                    className="w-full h-8 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-[11.5px] font-semibold text-zinc-200 hover:text-white rounded-lg transition-all"
                   >
-                    Change partner
+                    Configure Donation
                   </button>
                 </div>
 
-                {activeCharity ? (
-                  <div className="p-5 grid md:grid-cols-2 gap-5">
-                    {/* Left — Charity Info */}
-                    <div className="flex items-start gap-3.5 p-4 bg-[#111] border border-[#1e1e1e] rounded-xl">
-                      {activeCharity.image_urls && activeCharity.image_urls.length > 0 ? (
-                        <img
-                          src={activeCharity.image_urls[0]}
-                          alt={activeCharity.name}
-                          className="w-9 h-9 rounded-lg object-cover border border-[#222] shrink-0"
-                        />
+                {/* Participation Summary Card */}
+                <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl p-5 flex flex-col justify-between gap-4">
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/15 flex items-center justify-center shrink-0">
+                      <Trophy size={14} className="text-emerald-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-[13px] font-semibold text-white">Upcoming Draw Eligibility</h3>
+                      {scores.length > 0 ? (
+                        <div className="mt-1.5 space-y-1.5">
+                          <p className="text-[12.5px] text-zinc-300">
+                            Ticket status: <span className="text-[#3ecf8e] font-bold">Eligible</span>
+                          </p>
+                          <p className="text-[11.5px] text-zinc-500 leading-relaxed">
+                            Your played numbers: <span className="font-mono text-emerald-400">{scores.map(s => s.score_value).join(", ")}</span>
+                          </p>
+                        </div>
                       ) : (
-                        <div className="w-9 h-9 rounded-lg bg-rose-500/10 border border-rose-500/15 flex items-center justify-center shrink-0">
-                          <Heart size={14} className="text-rose-400" />
-                        </div>
+                        <p className="text-[12px] text-zinc-500 italic mt-1 leading-relaxed">Log at least one round in My Scores to register your ticket numbers and enter upcoming draws.</p>
                       )}
-                      <div className="min-w-0">
-                        <span className="text-[9.5px] text-rose-400 font-bold uppercase tracking-widest block">Active Partner</span>
-                        <h4 className="text-[13px] font-semibold text-white mt-0.5 leading-tight">{activeCharity.name}</h4>
-                        <p className="text-[11.5px] text-zinc-500 mt-1.5 leading-relaxed line-clamp-3">{activeCharity.description}</p>
-                      </div>
-                    </div>
-
-                    {/* Right — Slider */}
-                    <div className="p-4 bg-[#111] border border-[#1e1e1e] rounded-xl flex flex-col gap-4">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[12px] font-medium text-zinc-300">Donation split</span>
-                        <span className="text-[13px] font-bold text-rose-400 bg-rose-500/8 border border-rose-500/15 px-2 py-0.5 rounded-md">{sliderValue}%</span>
-                      </div>
-                      <div className="space-y-1.5">
-                        <input
-                          type="range"
-                          min="10"
-                          max="100"
-                          step="5"
-                          value={sliderValue}
-                          onChange={handleSliderChange}
-                          style={{
-                            "--slider-pct": ((sliderValue - 10) / 90) * 100,
-                            background: `linear-gradient(to right, #f43f5e ${((sliderValue - 10) / 90) * 100}%, #3f3f46 ${((sliderValue - 10) / 90) * 100}%)`
-                          }}
-                          className="w-full h-[3px] rounded-full appearance-none cursor-pointer accent-rose-500 transition-none"
-                        />
-                        <div className="flex justify-between text-[9.5px] text-zinc-600 font-mono">
-                          <span>10%</span>
-                          <span>50%</span>
-                          <span>100%</span>
-                        </div>
-                      </div>
-                      <div className="flex items-start gap-2 p-3 bg-rose-500/4 border border-rose-500/8 rounded-lg">
-                        <AlertCircle size={12} className="text-rose-400 mt-0.5 shrink-0" />
-                        <p className="text-[11px] text-zinc-400 leading-relaxed">
-                          {subscription?.status === "active" ? (
-                            <>You are donating <span className="text-white font-semibold">£{((12.00 * sliderValue) / 100).toFixed(2)}</span> monthly to {activeCharity.name}.</>
-                          ) : (
-                            <>Upgrade to Pro to enable automated subscription cuts to your charity.</>  
-                          )}
-                        </p>
-                      </div>
                     </div>
                   </div>
-                ) : (
-                  <div className="flex flex-col items-center gap-3 py-12 px-6 text-center">
-                    <div className="w-10 h-10 rounded-xl bg-rose-500/8 border border-rose-500/12 flex items-center justify-center">
-                      <Heart size={18} className="text-rose-400" />
-                    </div>
-                    <div>
-                      <p className="text-[13px] font-semibold text-white">No charity selected</p>
-                      <p className="text-[11.5px] text-zinc-500 mt-1 max-w-[260px] mx-auto">Choose a cause from our directory to begin directing your subscription contribution.</p>
-                    </div>
-                    <button
-                      onClick={() => setActiveTab("charities")}
-                      className="h-7 px-4 bg-[#3ecf8e] hover:bg-[#32b37a] text-black text-[11.5px] font-bold rounded-lg transition-all"
-                    >
-                      Browse directory
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* ── Winnings Claims ── */}
-              {winners.length > 0 && (
-                <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl overflow-hidden">
-                  <div className="flex items-center gap-2.5 px-5 py-4 border-b border-[#1e1e1e]">
-                    <div className="w-6 h-6 rounded-md bg-emerald-500/10 border border-emerald-500/15 flex items-center justify-center">
-                      <Award size={12} className="text-emerald-400" />
-                    </div>
-                    <div>
-                      <h3 className="text-[13px] font-semibold text-white">Winnings & Claims</h3>
-                      <p className="text-[11px] text-zinc-500">Upload proof to verify your prize claims</p>
-                    </div>
-                  </div>
-                  <div className="divide-y divide-[#1e1e1e]">
-                    {winners.map((w) => (
-                      <div key={w.id} className="px-5 py-4 flex flex-col sm:flex-row justify-between sm:items-center gap-4">
-                        <div className="space-y-1.5">
-                          <p className="text-[12.5px] font-semibold text-white">Draw {w.draws?.month}/{w.draws?.year}</p>
-                          <p className="text-[11px] text-zinc-500 capitalize">{w.draws?.draw_type?.replace("_", " ")}</p>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className={`text-[9.5px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md border ${
-                              w.verification_status === "approved"
-                                ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
-                                : w.verification_status === "rejected"
-                                  ? "bg-red-500/10 border-red-500/20 text-red-400"
-                                  : "bg-amber-500/10 border-amber-500/20 text-amber-400"
-                            }`}>{w.verification_status}</span>
-                            <span className={`text-[9.5px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md border ${
-                              w.payment_status === "paid"
-                                ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
-                                : "bg-zinc-800 border-zinc-700/50 text-zinc-500"
-                            }`}>{w.payment_status}</span>
-                          </div>
-                        </div>
-                        <div className="shrink-0">
-                          {w.verification_status !== "approved" ? (
-                            <label className="inline-flex items-center gap-1.5 px-3 h-7 bg-transparent border border-[#272727] hover:border-[#333] rounded-lg text-[11px] font-medium text-zinc-400 hover:text-white cursor-pointer transition-all">
-                              <Upload size={10} />
-                              {w.proof_image_url ? "Re-upload" : "Upload proof"}
-                              <input type="file" accept="image/*" className="hidden" onChange={(e) => handleWinnerProofUpload(e, w.id)} />
-                            </label>
-                          ) : (
-                            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-400">
-                              <CheckCircle2 size={12} /> Verified
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  <button
+                    onClick={() => setActiveTab("scores")}
+                    className="w-full h-8 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-[11.5px] font-semibold text-zinc-200 hover:text-white rounded-lg transition-all"
+                  >
+                    Manage Scores
+                  </button>
                 </div>
-              )}
+              </div>
 
             </div>
           )}
@@ -1740,153 +1792,245 @@ export default function DashboardPage() {
 
           {/* TAB 3: CHARITIES DIRECTORY                                   */}
           {/* ============================================================ */}
-          {activeTab === "charities" && (
+          {activeTab === "charity" && (
             <div className="space-y-6 animate-fadeInUp">
               
               <div className="border-b border-[#222] pb-5">
                 <h1 className="text-[20px] font-bold text-white tracking-tight flex items-center gap-2">
                   <Heart size={18} className="text-rose-500 fill-rose-500" />
-                  Charity Partners Directory
+                  My Charity Partner
                 </h1>
-                <p className="text-[12.5px] text-zinc-500 mt-1">Browse, search, and support active charities. Select a cause to receive your subscription donation.</p>
+                <p className="text-[12.5px] text-zinc-500 mt-1">Configure your monthly donation share and switch partner causes.</p>
               </div>
 
-              {/* Search Bar / Filter Tags */}
-              <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
-                <div className="relative w-full sm:max-w-md">
-                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
-                  <input
-                    type="text"
-                    placeholder="Search charities by name or cause description..."
-                    value={charitySearch}
-                    onChange={(e) => setCharitySearch(e.target.value)}
-                    className="w-full h-9 pl-9 pr-4 bg-[#141414] border border-[#222] rounded text-[12.5px] text-white focus:outline-none focus:border-[#3ecf8e]"
-                  />
-                </div>
-
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {["All", "Featured", "Environment", "Humanitarian", "Wellbeing"].map((tag) => (
+              {/* Current Selection & Slider */}
+              <div className="grid md:grid-cols-2 gap-5">
+                {/* Active Partner Info */}
+                <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl p-5 flex flex-col justify-between gap-4">
+                  <div>
+                    <span className="text-[9.5px] text-rose-400 font-bold uppercase tracking-widest block">Supported Partner</span>
+                    {activeCharity ? (
+                      <div className="flex items-start gap-3.5 mt-2.5">
+                        {activeCharity.image_urls && activeCharity.image_urls.length > 0 ? (
+                          <img
+                            src={activeCharity.image_urls[0]}
+                            alt={activeCharity.name}
+                            className="w-10 h-10 rounded-lg object-cover border border-[#222] shrink-0"
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-lg bg-rose-500/10 border border-rose-500/15 flex items-center justify-center shrink-0">
+                            <Heart size={16} className="text-rose-400" />
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <h4 className="text-[14px] font-bold text-white leading-tight">{activeCharity.name}</h4>
+                          <p className="text-[11.5px] text-zinc-500 mt-1 leading-relaxed line-clamp-3">{activeCharity.description}</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-4 p-4 bg-zinc-950/40 border border-[#222] rounded-lg text-center py-8">
+                        <Heart size={24} className="text-zinc-600 mx-auto mb-2" />
+                        <p className="text-[12px] text-zinc-400 italic">No charity selected yet. Select a cause below.</p>
+                      </div>
+                    )}
+                  </div>
+                  {activeCharity && (
                     <button
-                      key={tag}
-                      onClick={() => setSelectedCharityCategory(tag)}
-                      className={`px-3 py-1 rounded text-[11px] font-bold transition-all border ${
-                        selectedCharityCategory === tag
-                          ? "bg-rose-500/10 border-rose-500/25 text-rose-400"
-                          : "bg-[#141414] border-[#222] text-zinc-400 hover:text-white"
-                      }`}
+                      onClick={() => {
+                        const target = document.getElementById("browse-charities-section");
+                        if (target) target.scrollIntoView({ behavior: "smooth" });
+                      }}
+                      className="h-8 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-[11.5px] font-semibold text-zinc-200 hover:text-white rounded-lg transition-all"
                     >
-                      {tag}
+                      Switch Charities Entirely
                     </button>
-                  ))}
+                  )}
+                </div>
+
+                {/* Donation Share Slider */}
+                <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl p-5 flex flex-col justify-between gap-4">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[12px] font-medium text-zinc-300">Donation Share percentage</span>
+                      <span className="text-[13.5px] font-bold text-rose-400 bg-rose-500/8 border border-rose-500/15 px-2 py-0.5 rounded-md font-mono">{sliderValue}%</span>
+                    </div>
+                    
+                    <div className="mt-4 space-y-2">
+                      <input
+                        type="range"
+                        min="10"
+                        max="100"
+                        step="5"
+                        value={sliderValue}
+                        onChange={handleSliderChange}
+                        style={{
+                          "--slider-pct": ((sliderValue - 10) / 90) * 100,
+                          background: `linear-gradient(to right, #f43f5e ${((sliderValue - 10) / 90) * 100}%, #3f3f46 ${((sliderValue - 10) / 90) * 100}%)`
+                        }}
+                        className="w-full h-[3.5px] rounded-full appearance-none cursor-pointer accent-rose-500 transition-none"
+                      />
+                      <div className="flex justify-between text-[9.5px] text-zinc-600 font-mono">
+                        <span>10% (Min)</span>
+                        <span>50%</span>
+                        <span>100%</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-2.5 p-3.5 bg-rose-500/4 border border-rose-500/8 rounded-lg">
+                    <AlertCircle size={12} className="text-rose-400 mt-0.5 shrink-0" />
+                    <p className="text-[11px] text-zinc-400 leading-relaxed">
+                      {subscription?.status === "active" ? (
+                        <>You are contributing <span className="text-white font-semibold">£{((12.00 * sliderValue) / 100).toFixed(2)}</span> monthly to help {activeCharity?.name || "your selected cause"}.</>
+                      ) : (
+                        <>Upgrade to Pro to automate monthly fee slice allocations (10% minimum split constraint enforced).</>  
+                      )}
+                    </p>
+                  </div>
                 </div>
               </div>
 
-              {/* Charities Grid */}
-              <div className="grid md:grid-cols-2 gap-4">
-                {charities
-                  .filter((c) => {
-                    const matchesSearch = c.name.toLowerCase().includes(charitySearch.toLowerCase()) || 
-                                          c.description.toLowerCase().includes(charitySearch.toLowerCase());
-                    const matchesCategory = selectedCharityCategory === "All" ||
-                                            (selectedCharityCategory === "Featured" && c.is_featured) ||
-                                            (selectedCharityCategory === "Environment" && c.name.toLowerCase().includes("green")) ||
-                                            (selectedCharityCategory === "Humanitarian" && c.name.toLowerCase().includes("red")) ||
-                                            (selectedCharityCategory === "Wellbeing" && c.name.toLowerCase().includes("mental"));
-                    return matchesSearch && matchesCategory;
-                  })
-                  .map((c) => {
-                    const isSupported = profile?.charity_id === c.id;
+              {/* Directory Section */}
+              <div id="browse-charities-section" className="space-y-4 pt-4 border-t border-[#222]">
+                <h3 className="text-[13px] font-bold text-white uppercase tracking-wider">Browse Charity Partners Directory</h3>
+                
+                {/* Search Bar / Filter Tags */}
+                <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
+                  <div className="relative w-full sm:max-w-md">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+                    <input
+                      type="text"
+                      placeholder="Search charities by name or cause description..."
+                      value={charitySearch}
+                      onChange={(e) => setCharitySearch(e.target.value)}
+                      className="w-full h-9 pl-9 pr-4 bg-[#141414] border border-[#222] rounded text-[12.5px] text-white focus:outline-none focus:border-[#3ecf8e]"
+                    />
+                  </div>
 
-                    return (
-                      <div key={c.id} className={`bg-[#141414] border rounded-lg p-5 flex flex-col justify-between hover:border-zinc-800 transition-colors shadow-lg relative overflow-hidden group ${
-                        isSupported ? "border-rose-500/25" : "border-[#222]"
-                      }`}>
-                        
-                        <div className="space-y-4">
-                          <div className="flex items-start gap-4">
-                            {c.image_urls && c.image_urls.length > 0 ? (
-                              <img 
-                                src={c.image_urls[0]} 
-                                alt={c.name} 
-                                className="w-12 h-12 rounded object-cover border border-[#222] shrink-0"
-                              />
-                            ) : (
-                              <div className="w-12 h-12 rounded bg-zinc-950 border border-zinc-900 flex items-center justify-center text-rose-500 shrink-0">
-                                <Heart size={20} />
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {["All", "Featured", "Environment", "Humanitarian", "Wellbeing"].map((tag) => (
+                      <button
+                        key={tag}
+                        onClick={() => setSelectedCharityCategory(tag)}
+                        className={`px-3 py-1 rounded text-[11px] font-bold transition-all border ${
+                          selectedCharityCategory === tag
+                            ? "bg-rose-500/10 border-rose-500/25 text-rose-400"
+                            : "bg-[#141414] border-[#222] text-zinc-400 hover:text-white"
+                        }`}
+                      >
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Charities Grid */}
+                <div className="grid md:grid-cols-2 gap-4">
+                  {charities
+                    .filter((c) => {
+                      const matchesSearch = c.name.toLowerCase().includes(charitySearch.toLowerCase()) || 
+                                            c.description.toLowerCase().includes(charitySearch.toLowerCase());
+                      const matchesCategory = selectedCharityCategory === "All" ||
+                                              (selectedCharityCategory === "Featured" && c.is_featured) ||
+                                              (selectedCharityCategory === "Environment" && c.name.toLowerCase().includes("green")) ||
+                                              (selectedCharityCategory === "Humanitarian" && c.name.toLowerCase().includes("red")) ||
+                                              (selectedCharityCategory === "Wellbeing" && c.name.toLowerCase().includes("mental"));
+                      return matchesSearch && matchesCategory;
+                    })
+                    .map((c) => {
+                      const isSupported = profile?.charity_id === c.id;
+
+                      return (
+                        <div key={c.id} className={`bg-[#141414] border rounded-lg p-5 flex flex-col justify-between hover:border-zinc-800 transition-colors shadow-lg relative overflow-hidden group ${
+                          isSupported ? "border-rose-500/25" : "border-[#222]"
+                        }`}>
+                          
+                          <div className="space-y-4">
+                            <div className="flex items-start gap-4">
+                              {c.image_urls && c.image_urls.length > 0 ? (
+                                <img 
+                                  src={c.image_urls[0]} 
+                                  alt={c.name} 
+                                  className="w-12 h-12 rounded object-cover border border-[#222] shrink-0"
+                                />
+                              ) : (
+                                <div className="w-12 h-12 rounded bg-zinc-950 border border-zinc-900 flex items-center justify-center text-rose-500 shrink-0">
+                                  <Heart size={20} />
+                                </div>
+                              )}
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-1.5">
+                                  <h3 className="text-[14px] font-bold text-white leading-tight">{c.name}</h3>
+                                  {c.is_featured && (
+                                    <span className="text-[8px] bg-rose-500/10 text-rose-400 border border-rose-500/20 px-1.5 py-0.1 rounded font-extrabold uppercase tracking-wide">
+                                      Spotlight
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-[10px] text-zinc-500 font-mono">ID: {c.id.substring(0, 8)}...</span>
+                              </div>
+                            </div>
+
+                            <p className="text-[12px] text-zinc-400 leading-relaxed font-medium">{c.description}</p>
+                            
+                            {/* Upcoming Events */}
+                            {c.upcoming_events && c.upcoming_events.length > 0 && (
+                              <div className="bg-zinc-950/40 p-3 rounded border border-[#222] space-y-1.5">
+                                <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest block">Upcoming Events</span>
+                                {c.upcoming_events.map((ev, i) => (
+                                  <div key={i} className="flex justify-between text-[11px] items-center">
+                                    <span className="text-zinc-300 font-semibold truncate max-w-[180px]">{ev.name}</span>
+                                    <span className="text-zinc-500 font-mono">{ev.date}</span>
+                                  </div>
+                                ))}
                               </div>
                             )}
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-1.5">
-                                <h3 className="text-[14px] font-bold text-white leading-tight">{c.name}</h3>
-                                {c.is_featured && (
-                                  <span className="text-[8px] bg-rose-500/10 text-rose-400 border border-rose-500/20 px-1.5 py-0.1 rounded font-extrabold uppercase tracking-wide">
-                                    Spotlight
-                                  </span>
-                                )}
-                              </div>
-                              <span className="text-[10px] text-zinc-500 font-mono">ID: {c.id.substring(0, 8)}...</span>
-                            </div>
                           </div>
 
-                          <p className="text-[12px] text-zinc-400 leading-relaxed font-medium">{c.description}</p>
-                          
-                          {/* Upcoming Events */}
-                          {c.upcoming_events && c.upcoming_events.length > 0 && (
-                            <div className="bg-zinc-950/40 p-3 rounded border border-[#222] space-y-1.5">
-                              <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest block">Upcoming Events</span>
-                              {c.upcoming_events.map((ev, i) => (
-                                <div key={i} className="flex justify-between text-[11px] items-center">
-                                  <span className="text-zinc-300 font-semibold truncate max-w-[180px]">{ev.name}</span>
-                                  <span className="text-zinc-500 font-mono">{ev.date}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
+                          {/* CTA Row */}
+                          <div className="pt-4 border-t border-[#222] mt-4 flex items-center justify-between">
+                            <span className="text-[11px] text-zinc-500">
+                              Raised: <span className="font-bold text-emerald-400">£1,420</span>
+                            </span>
+                            
+                            {isSupported ? (
+                              <button 
+                                disabled
+                                className="h-7.5 px-3 bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[11px] font-bold rounded cursor-default flex items-center gap-1"
+                              >
+                                <Check size={11} strokeWidth={3} /> Selected Partner
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handleSupportCharity(c.id, c.name)}
+                                className="h-7.5 px-3 bg-[#3ecf8e] text-black hover:bg-[#32b37a] text-[11px] font-bold rounded transition-all"
+                              >
+                                Support Cause
+                              </button>
+                            )}
+                          </div>
 
-                        {/* CTA Row */}
-                        <div className="pt-4 border-t border-[#222] mt-4 flex items-center justify-between">
-                          <span className="text-[11px] text-zinc-500">
-                            Raised: <span className="font-bold text-emerald-400">£1,420</span>
-                          </span>
-                          
-                          {isSupported ? (
-                            <button 
-                              disabled
-                              className="h-7.5 px-3 bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[11px] font-bold rounded cursor-default flex items-center gap-1"
-                            >
-                              <Check size={11} strokeWidth={3} /> Selected Partner
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => handleSupportCharity(c.id, c.name)}
-                              className="h-7.5 px-3 bg-[#3ecf8e] text-black hover:bg-[#32b37a] text-[11px] font-bold rounded transition-all"
-                            >
-                              Support Cause
-                            </button>
-                          )}
                         </div>
-
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                </div>
               </div>
 
             </div>
           )}
 
           {/* ============================================================ */}
-          {/* TAB 4: PRIZE DRAWS CENTER                                    */}
+          {/* TAB 4: DRAWS & WINNINGS                                      */}
           {/* ============================================================ */}
-          {activeTab === "draws" && (
+          {activeTab === "draws_winnings" && (
             <div className="space-y-6 animate-fadeInUp">
               
               <div className="border-b border-[#222] pb-5">
                 <h1 className="text-[20px] font-bold text-white tracking-tight flex items-center gap-2">
                   <Trophy size={18} className="text-[#3ecf8e]" />
-                  Prize Draws Center
+                  Draws & Winnings Center
                 </h1>
-                <p className="text-[12.5px] text-zinc-500 mt-1">Review pool shares, ticket entries, and past drawing winning numbers.</p>
+                <p className="text-[12.5px] text-zinc-500 mt-1">Review active draw entry cards, historic draw results, and verified claim payouts.</p>
               </div>
 
               {/* Pool split detail banner */}
@@ -1911,7 +2055,7 @@ export default function DashboardPage() {
               <div className="bg-[#141414] border border-[#222] rounded-lg p-5 flex flex-col md:flex-row justify-between items-center gap-4">
                 <div className="space-y-1">
                   <span className="text-[9px] text-zinc-500 uppercase tracking-widest font-bold block">My Entry Card</span>
-                  <h3 className="text-[15px] font-extrabold text-white">Played Numbers for upcoming Draws</h3>
+                  <h3 className="text-[15px] font-extrabold text-white">Played Numbers for July 2026 Draws</h3>
                   <p className="text-[12px] text-zinc-400">Your ticket numbers are derived from your latest 5 logged score cards.</p>
                 </div>
                 
@@ -1922,13 +2066,67 @@ export default function DashboardPage() {
                     scores.map((s) => (
                       <span 
                         key={s.id} 
-                        className="w-9 h-9 rounded-full border border-zinc-800 bg-zinc-950 flex items-center justify-center font-bold text-[13.5px] text-[#3ecf8e] shadow-inner font-mono"
+                        className="w-9 h-9 rounded-full border border-zinc-800 bg-zinc-950 flex items-center justify-center font-bold text-[13.5px] text-[#3ecf8e] shadow-inner font-mono animate-scaleUp"
                       >
                         {s.score_value}
                       </span>
                     ))
                   )}
                 </div>
+              </div>
+
+              {/* Winnings History Card */}
+              <div className="bg-[#141414] border border-[#222] rounded-xl overflow-hidden shadow-lg">
+                <div className="flex items-center gap-2.5 px-5 py-4 border-b border-zinc-900 bg-zinc-950/20">
+                  <div className="w-6 h-6 rounded-md bg-emerald-500/10 border border-emerald-500/15 flex items-center justify-center">
+                    <Award size={12} className="text-emerald-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-[13px] font-semibold text-white">Winnings & Claims Overview</h3>
+                    <p className="text-[11px] text-zinc-500">Total won historically: <span className="text-emerald-400 font-bold">£{winners.reduce((acc, w) => acc + (w.draws?.prize_pool_amount ? 120.00 : 0.00), 0.00).toFixed(2)}</span></p>
+                  </div>
+                </div>
+                {winners.length === 0 ? (
+                  <div className="text-center py-8 text-zinc-500 italic text-[12px]">No wins detected in historical draws yet. Keep playing!</div>
+                ) : (
+                  <div className="divide-y divide-[#222]">
+                    {winners.map((w) => (
+                      <div key={w.id} className="px-5 py-4 flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+                        <div className="space-y-1.5">
+                          <p className="text-[12.5px] font-semibold text-white">Draw {w.draws?.month}/{w.draws?.year}</p>
+                          <p className="text-[11px] text-zinc-500 capitalize">{w.draws?.draw_type?.replace("_", " ")}</p>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`text-[9.5px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md border ${
+                              w.verification_status === "approved"
+                                ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                                : w.verification_status === "rejected"
+                                  ? "bg-red-500/10 border-red-500/20 text-red-400"
+                                  : "bg-amber-500/10 border-amber-500/20 text-amber-400"
+                            }`}>{w.verification_status}</span>
+                            <span className={`text-[9.5px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md border ${
+                              w.payment_status === "paid"
+                                ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                                : "bg-zinc-800 border-zinc-700/50 text-zinc-500"
+                            }`}>{w.payment_status}</span>
+                          </div>
+                        </div>
+                        <div className="shrink-0">
+                          {w.verification_status !== "approved" ? (
+                            <label className="inline-flex items-center gap-1.5 px-3 h-7 bg-transparent border border-[#272727] hover:border-[#333] rounded-lg text-[11px] font-medium text-zinc-400 hover:text-white cursor-pointer transition-all">
+                              <Upload size={10} />
+                              {w.proof_image_url ? "Re-upload Proof" : "Upload Score Proof"}
+                              <input type="file" accept="image/*" className="hidden" onChange={(e) => handleWinnerProofUpload(e, w.id)} />
+                            </label>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-400">
+                              <CheckCircle2 size={12} /> Verified Win
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Past Draws List */}
@@ -1947,7 +2145,7 @@ export default function DashboardPage() {
                         <div className="text-[11px] text-zinc-500 flex items-center gap-2 flex-wrap">
                           <span>Jackpot Rollover: £{d.jackpot_rollover_amount.toLocaleString()}</span>
                           <span>•</span>
-                          <span className="capitalize font-mono">Engine: {d.logic_type}</span>
+                          <span className="capitalize font-mono text-[10px]">Engine: {d.logic_type}</span>
                         </div>
                       </div>
 
