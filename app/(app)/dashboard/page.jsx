@@ -172,8 +172,7 @@ export default function DashboardPage() {
   const [claimVerificationFilter, setClaimVerificationFilter] = useState("all");
   const [claimPaymentFilter, setClaimPaymentFilter] = useState("all");
 
-  // Winner Verification and Proof States
-  const [uploadingProof, setUploadingProof] = useState(false);
+  const [uploadingProof, setUploadingProof] = useState(null); // stores the winnerId of the record currently uploading
   const [uploadError, setUploadError] = useState("");
   const [adminProofModal, setAdminProofModal] = useState(null);
   const [verifyingWinner, setVerifyingWinner] = useState(null);
@@ -356,6 +355,8 @@ export default function DashboardPage() {
       }
     } catch (err) {
       console.error("Error loading dashboard data:", err);
+    } finally {
+      setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]); // stable: only re-create when user identity changes, not on every render
@@ -671,24 +672,24 @@ export default function DashboardPage() {
     if (!file) return;
 
     setUploadError("");
-    setUploadingProof(true);
+    setUploadingProof(winnerId);
 
     const validTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
     if (!validTypes.includes(file.type)) {
       triggerToast("Please upload an image file (JPEG, PNG, GIF, or WEBP)", "error");
-      setUploadingProof(false);
+      setUploadingProof(null);
       return;
     }
 
     if (file.size < 1024) {
       triggerToast("File is too small to be a valid image", "error");
-      setUploadingProof(false);
+      setUploadingProof(null);
       return;
     }
 
     if (file.size > 5242880) { // 5MB
       triggerToast("File size must not exceed 5MB", "error");
-      setUploadingProof(false);
+      setUploadingProof(null);
       return;
     }
 
@@ -715,7 +716,7 @@ export default function DashboardPage() {
       console.error(err);
       triggerToast("Server connection error", "error");
     } finally {
-      setUploadingProof(false);
+      setUploadingProof(null);
       e.target.value = "";
     }
   };
@@ -1371,8 +1372,64 @@ export default function DashboardPage() {
         <main className="flex-1 bg-[#111] overflow-y-auto relative">
           <div className="max-w-[960px] mx-auto px-8 py-8">
 
-          {/* ============================================================ */}
-          {/* TAB 1: DASHBOARD OVERVIEW                                    */}
+          {loading ? (
+            <div className="space-y-6 animate-pulse">
+              {/* Page Header Skeleton */}
+              <div className="flex items-start justify-between">
+                <div className="space-y-2">
+                  <div className="h-5 w-48 bg-zinc-800 rounded"></div>
+                  <div className="h-3 w-72 bg-zinc-800/60 rounded"></div>
+                </div>
+                <div className="h-7 w-16 bg-zinc-800/40 rounded-lg"></div>
+              </div>
+
+              {/* Stat Cards Skeleton */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="bg-[#161616] border border-[#1e1e1e] rounded-xl p-4 space-y-4">
+                    <div className="flex justify-between items-center">
+                      <div className="h-3 w-16 bg-zinc-800 rounded"></div>
+                      <div className="h-3 w-8 bg-zinc-800 rounded"></div>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="h-6 w-24 bg-zinc-800 rounded"></div>
+                      <div className="h-3 w-32 bg-zinc-800/60 rounded"></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Two Column Section Skeletons */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Left Card Skeleton */}
+                <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl p-5 space-y-4">
+                  <div className="h-4 w-32 bg-zinc-800 rounded"></div>
+                  <div className="space-y-3">
+                    {[1, 2, 3].map((j) => (
+                      <div key={j} className="flex justify-between items-center py-2 border-b border-zinc-900/40">
+                        <div className="space-y-1">
+                          <div className="h-3 w-28 bg-zinc-800 rounded"></div>
+                          <div className="h-2 w-16 bg-zinc-800/50 rounded"></div>
+                        </div>
+                        <div className="h-3 w-10 bg-zinc-800 rounded"></div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Right Card Skeleton */}
+                <div className="bg-[#161616] border border-[#1e1e1e] rounded-xl p-5 space-y-4">
+                  <div className="h-4 w-32 bg-zinc-800 rounded"></div>
+                  <div className="h-32 bg-zinc-800/30 rounded-lg flex items-center justify-center">
+                    <div className="h-6 w-6 border-2 border-t-transparent border-zinc-700 rounded-full animate-spin"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* ============================================================ */}
+              {/* TAB 1: DASHBOARD OVERVIEW                                    */}
           {/* ============================================================ */}
           {activeTab === "overview" && (
             <div className="space-y-6 animate-fadeInUp">
@@ -2215,7 +2272,12 @@ export default function DashboardPage() {
                                 : w.verification_status === "rejected"
                                   ? "bg-red-500/10 border-red-500/20 text-red-400"
                                   : "bg-amber-500/10 border-amber-500/20 text-amber-400"
-                            }`}>{w.verification_status}</span>
+                            }`}>
+                              {w.verification_status === "pending"
+                                ? (w.proof_image_url ? "Awaiting Verification" : "Awaiting Upload")
+                                : w.verification_status
+                              }
+                            </span>
                             <span className={`text-[9.5px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md border ${
                               w.payment_status === "paid"
                                 ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
@@ -2229,11 +2291,16 @@ export default function DashboardPage() {
                           )}
                         </div>
                         <div className="shrink-0">
-                          {w.verification_status !== "approved" ? (
+                          {uploadingProof === w.id ? (
+                            <span className="inline-flex items-center gap-1.5 text-[11px] text-zinc-500 font-mono animate-pulse">
+                              <span className="w-2.5 h-2.5 border-2 border-t-transparent border-zinc-500 rounded-full animate-spin"></span>
+                              Uploading...
+                            </span>
+                          ) : w.verification_status !== "approved" ? (
                             <label className="inline-flex items-center gap-1.5 px-3 h-7 bg-transparent border border-[#272727] hover:border-[#333] rounded-lg text-[11px] font-medium text-zinc-400 hover:text-white cursor-pointer transition-all">
                               <Upload size={10} />
                               {w.proof_image_url ? "Re-upload Proof" : "Upload Score Proof"}
-                              <input type="file" accept="image/*" className="hidden" onChange={(e) => handleProofUpload(e, w.id)} />
+                              <input type="file" accept="image/*" className="hidden" disabled={!!uploadingProof} onChange={(e) => handleProofUpload(e, w.id)} />
                             </label>
                           ) : (
                             <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-400">
@@ -3067,6 +3134,9 @@ export default function DashboardPage() {
                 </div>
               )}
             </div>
+          )}
+
+            </>
           )}
 
           </div>
