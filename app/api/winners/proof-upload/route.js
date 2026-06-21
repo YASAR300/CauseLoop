@@ -89,8 +89,7 @@ export async function POST(request) {
         {
           folder: `winner-proofs/${winnerId}`,
           public_id: `${timestamp}_${sanitized.split(".")[0]}`,
-          resource_type: "image",
-          upload_preset: process.env.CLOUDINARY_UPLOAD_PRESET || undefined
+          resource_type: "image"
         },
         (error, result) => {
           if (error) {
